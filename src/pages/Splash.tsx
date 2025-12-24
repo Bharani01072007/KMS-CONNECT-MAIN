@@ -1,74 +1,66 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import logo from '@/assets/logo.jpg';
 
+const SPLASH_TIMEOUT = 1500; // fast & mobile friendly
+
 const Splash = () => {
   const navigate = useNavigate();
-  const { user, role, loading } = useAuth();
+  const { user, loading } = useAuth();
 
-  const [minTimePassed, setMinTimePassed] = useState(false);
-  const hasRedirected = useRef(false);
+  const redirectedRef = useRef(false);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  /* ---------------- MIN SPLASH TIME (1s) ---------------- */
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setMinTimePassed(true);
-    }, 1000); // fast & smooth
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  /* ---------------- FAILSAFE (4s) ---------------- */
-  useEffect(() => {
-    const failsafe = setTimeout(() => {
-      if (!hasRedirected.current) {
-        console.warn('Splash failsafe triggered');
-        navigate('/auth', { replace: true });
-        hasRedirected.current = true;
-      }
-    }, 4000);
-
-    return () => clearTimeout(failsafe);
-  }, [navigate]);
-
-  /* ---------------- MAIN REDIRECT LOGIC ---------------- */
-  useEffect(() => {
-    if (loading) return;
-    if (!minTimePassed) return;
-    if (hasRedirected.current) return;
-
-    hasRedirected.current = true;
+  // 🔐 SINGLE SAFE REDIRECT FUNCTION
+  const redirect = () => {
+    if (redirectedRef.current) return;
+    redirectedRef.current = true;
 
     if (!user) {
       navigate('/auth', { replace: true });
-      return;
-    }
-
-    if (role === 'admin') {
-      navigate('/admin/dashboard', { replace: true });
     } else {
+      // 🚀 ENTER APP IMMEDIATELY (DO NOT WAIT FOR ROLE)
       navigate('/employee/dashboard', { replace: true });
     }
-  }, [loading, minTimePassed, user, role, navigate]);
+  };
 
-  /* ---------------- UI ---------------- */
+  // ⏳ SPLASH TIMER (GUARANTEED EXIT)
+  useEffect(() => {
+    timeoutRef.current = setTimeout(() => {
+      redirect();
+    }, SPLASH_TIMEOUT);
+
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  // ⚡ FAST EXIT IF AUTH RESOLVES EARLY
+  useEffect(() => {
+    if (!loading) {
+      redirect();
+    }
+  }, [loading]);
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background">
       <img
         src={logo}
-        alt="KMS Logo"
-        className="w-[200px] mb-4"
+        alt="Company Logo"
+        className="mb-4"
+        style={{ width: 208, height: 66 }}
       />
 
-      <p className="text-sm text-muted-foreground">
+      <p className="text-muted-foreground text-sm">
         Workforce Management System
       </p>
 
+      {/* Minimal loader (never blocks forever) */}
       <div className="flex gap-1 mt-4">
         <span className="w-2 h-2 bg-primary rounded-full animate-bounce" />
-        <span className="w-2 h-2 bg-primary rounded-full animate-bounce delay-150" />
-        <span className="w-2 h-2 bg-primary rounded-full animate-bounce delay-300" />
+        <span className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:150ms]" />
+        <span className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:300ms]" />
       </div>
     </div>
   );

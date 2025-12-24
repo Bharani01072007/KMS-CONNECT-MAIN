@@ -6,17 +6,28 @@ import logo from '@/assets/logo.jpg';
 const Splash = () => {
   const navigate = useNavigate();
   const { user, role, loading } = useAuth();
-  const [showSplash, setShowSplash] = useState(true);
 
-  // Splash timer
+  const [showSplash, setShowSplash] = useState(true);
+  const [forceExit, setForceExit] = useState(false);
+
+  // ⏱️ Splash display timer
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 2500);
     return () => clearTimeout(timer);
   }, []);
 
-  // 🚦 SAFE REDIRECT (NO LOOP)
+  // ⛑️ HARD FAILSAFE (prevents infinite splash)
   useEffect(() => {
-    if (loading || showSplash) return;
+    const fallback = setTimeout(() => {
+      setForceExit(true);
+    }, 5000); // max wait = 5s
+
+    return () => clearTimeout(fallback);
+  }, []);
+
+  // 🚦 SAFE REDIRECT
+  useEffect(() => {
+    if ((loading || showSplash) && !forceExit) return;
 
     if (!user) {
       navigate('/auth', { replace: true });
@@ -28,7 +39,7 @@ const Splash = () => {
     } else {
       navigate('/employee/dashboard', { replace: true });
     }
-  }, [loading, showSplash, user, role, navigate]);
+  }, [loading, showSplash, forceExit, user, role, navigate]);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center">

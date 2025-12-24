@@ -54,7 +54,6 @@ const AdminLedger = () => {
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [balance, setBalance] = useState(0);
 
-  /* Manual transaction */
   const [entryType, setEntryType] = useState<'credit' | 'debit'>('credit');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
@@ -66,10 +65,7 @@ const AdminLedger = () => {
   }, []);
 
   useEffect(() => {
-    if (selectedEmployee) {
-      calculateMonthlySalary(); // ✅ ONLY ADDITION
-      fetchLedger();
-    }
+    if (selectedEmployee) fetchLedger();
   }, [selectedEmployee, selectedMonth]);
 
   const fetchEmployees = async () => {
@@ -103,61 +99,24 @@ const AdminLedger = () => {
     setBalance(total?.balance ?? 0);
   };
 
-  /* ===================== 🔥 SALARY CALCULATION (ADDED) ===================== */
+  /* ===================== SAFE NOTIFICATION ===================== */
 
-  const calculateMonthlySalary = async () => {
-    if (!selectedEmployee) return;
-
-    const monthStart = format(selectedMonth, 'yyyy-MM-01');
-    const monthEnd = format(
-      new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0),
-      'yyyy-MM-dd'
-    );
-
-    // Fetch attendance
-    const { data: attendance } = await supabase
-      .from('attendance')
-      .select('attendance_type')
-      .eq('emp_user_id', selectedEmployee)
-      .gte('day', monthStart)
-      .lte('day', monthEnd);
-
-    if (!attendance || attendance.length === 0) return;
-
-    const fullDays = attendance.filter(a => a.attendance_type === 'full').length;
-    const halfDays = attendance.filter(a => a.attendance_type === 'half').length;
-
-    // Fetch daily wage
-    const { data: emp } = await supabase
-      .from('employees')
-      .select('daily_wage')
-      .eq('user_id', selectedEmployee)
-      .maybeSingle();
-
-    if (!emp?.daily_wage) return;
-
-    const salary =
-      fullDays * emp.daily_wage +
-      halfDays * (emp.daily_wage / 2);
-
-    // Avoid duplicate salary credit
-    const { data: existing } = await supabase
-      .from('money_ledger')
-      .select('id')
-      .eq('emp_user_id', selectedEmployee)
-      .eq('month_year', monthStart)
-      .eq('reason', 'Monthly Salary');
-
-    if (existing && existing.length > 0) return;
-
-    // Insert salary credit
-    await supabase.from('money_ledger').insert({
-      emp_user_id: selectedEmployee,
-      amount: salary,
-      type: 'credit',
-      reason: 'Monthly Salary',
-      month_year: monthStart,
-    });
+  const sendSalaryNotification = async (
+    empUserId: string,
+    month: Date
+  ) => {
+    try {
+      await supabase.from('notifications').insert({
+        user_id: empUserId,
+        title: 'Salary Settled',
+        body: `Your salary for ${format(
+          month,
+          'MMMM yyyy'
+        )} has been settled successfully.`,
+      });
+    } catch (e) {
+      console.error('Salary notification failed', e);
+    }
   };
 
   /* ===================== MANUAL TRANSACTION ===================== */
@@ -165,14 +124,12 @@ const AdminLedger = () => {
   const handleAddTransaction = async () => {
     if (!amount || !selectedEmployee) return;
 
-    const monthStart = format(selectedMonth, 'yyyy-MM-01');
-
     await supabase.from('money_ledger').insert({
       emp_user_id: selectedEmployee,
       amount: Number(amount),
       type: entryType,
       reason: note || (entryType === 'credit' ? 'Manual payment' : 'Advance'),
-      month_year: monthStart,
+      month_year: format(selectedMonth, 'yyyy-MM-01'),
     });
 
     setAmount('');
@@ -184,27 +141,17 @@ const AdminLedger = () => {
   /* ===================== SALARY SETTLEMENT ===================== */
 
   const handleSettleSalary = async () => {
-    if (balance <= 0) return;
-
-    const monthStart = format(selectedMonth, 'yyyy-MM-01');
+    if (balance <= 0 || !selectedEmployee) return;
 
     await supabase.from('money_ledger').insert({
       emp_user_id: selectedEmployee,
       amount: balance,
       type: 'debit',
       reason: 'Salary Paid - Full Settlement',
-      month_year: monthStart,
+      month_year: format(selectedMonth, 'yyyy-MM-01'),
     });
 
-    await supabase.from('notifications').insert({
-      user_id: selectedEmployee,
-      title: 'Salary Settled',
-      body: `Your salary for ${format(
-        selectedMonth,
-        'MMMM yyyy'
-      )} has been settled successfully.`,
-      read: false,
-    });
+    await sendSalaryNotification(selectedEmployee, selectedMonth);
 
     fetchLedger();
     toast({ title: 'Salary Settled' });
@@ -227,7 +174,7 @@ const AdminLedger = () => {
       <Header title="Ledger Management" backTo="/admin/dashboard" />
 
       <main className="p-4 max-w-4xl mx-auto space-y-4">
-        {/* 🔒 UI REMAINS COMPLETELY UNCHANGED */}
+        {/* UI remains unchanged */}
       </main>
     </div>
   );

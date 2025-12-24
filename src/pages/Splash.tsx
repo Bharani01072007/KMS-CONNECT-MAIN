@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import logo from '@/assets/logo.jpg';
@@ -7,27 +7,38 @@ const Splash = () => {
   const navigate = useNavigate();
   const { user, role, loading } = useAuth();
 
-  const [showSplash, setShowSplash] = useState(true);
-  const [forceExit, setForceExit] = useState(false);
+  const [minTimePassed, setMinTimePassed] = useState(false);
+  const hasRedirected = useRef(false);
 
-  // ⏱️ Splash display timer
+  /* ---------------- MIN SPLASH TIME (1s) ---------------- */
   useEffect(() => {
-    const timer = setTimeout(() => setShowSplash(false), 2500);
+    const timer = setTimeout(() => {
+      setMinTimePassed(true);
+    }, 1000); // fast & smooth
+
     return () => clearTimeout(timer);
   }, []);
 
-  // ⛑️ HARD FAILSAFE (prevents infinite splash)
+  /* ---------------- FAILSAFE (4s) ---------------- */
   useEffect(() => {
-    const fallback = setTimeout(() => {
-      setForceExit(true);
-    }, 5000); // max wait = 5s
+    const failsafe = setTimeout(() => {
+      if (!hasRedirected.current) {
+        console.warn('Splash failsafe triggered');
+        navigate('/auth', { replace: true });
+        hasRedirected.current = true;
+      }
+    }, 4000);
 
-    return () => clearTimeout(fallback);
-  }, []);
+    return () => clearTimeout(failsafe);
+  }, [navigate]);
 
-  // 🚦 SAFE REDIRECT
+  /* ---------------- MAIN REDIRECT LOGIC ---------------- */
   useEffect(() => {
-    if ((loading || showSplash) && !forceExit) return;
+    if (loading) return;
+    if (!minTimePassed) return;
+    if (hasRedirected.current) return;
+
+    hasRedirected.current = true;
 
     if (!user) {
       navigate('/auth', { replace: true });
@@ -39,12 +50,21 @@ const Splash = () => {
     } else {
       navigate('/employee/dashboard', { replace: true });
     }
-  }, [loading, showSplash, forceExit, user, role, navigate]);
+  }, [loading, minTimePassed, user, role, navigate]);
 
+  /* ---------------- UI ---------------- */
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center">
-      <img src={logo} alt="KMS Logo" style={{ width: 208, height: 66 }} />
-      <p className="text-muted-foreground">Workforce Management System</p>
+    <div className="min-h-screen flex flex-col items-center justify-center bg-background">
+      <img
+        src={logo}
+        alt="KMS Logo"
+        className="w-[200px] mb-4"
+      />
+
+      <p className="text-sm text-muted-foreground">
+        Workforce Management System
+      </p>
+
       <div className="flex gap-1 mt-4">
         <span className="w-2 h-2 bg-primary rounded-full animate-bounce" />
         <span className="w-2 h-2 bg-primary rounded-full animate-bounce delay-150" />

@@ -117,7 +117,7 @@ const AdminLedger = () => {
       .eq('month_year', monthStart)
       .eq('reason', 'Monthly Salary');
 
-    if (exists?.length) return;
+    if (exists && exists.length > 0) return;
 
     const { data: attendance } = await supabase
       .from('attendance')
@@ -126,10 +126,10 @@ const AdminLedger = () => {
       .gte('day', monthStart)
       .lte('day', monthEnd);
 
-    if (!attendance?.length) return;
+    if (!attendance || attendance.length === 0) return;
 
-    const full = attendance.filter(a => a.attendance_type === 'full').length;
-    const half = attendance.filter(a => a.attendance_type === 'half').length;
+    const fullDays = attendance.filter(a => a.attendance_type === 'full').length;
+    const halfDays = attendance.filter(a => a.attendance_type === 'half').length;
 
     const { data: emp } = await supabase
       .from('employees')
@@ -139,7 +139,9 @@ const AdminLedger = () => {
 
     if (!emp?.daily_wage) return;
 
-    const salary = full * emp.daily_wage + half * (emp.daily_wage / 2);
+    const salary =
+      fullDays * emp.daily_wage +
+      halfDays * (emp.daily_wage / 2);
 
     if (salary <= 0) return;
 
@@ -190,10 +192,12 @@ const AdminLedger = () => {
 
   /* ===================== TOTALS ===================== */
 
-  const totalCredits = entries.filter(e => e.type === 'credit')
+  const totalCredits = entries
+    .filter(e => e.type === 'credit')
     .reduce((s, e) => s + e.amount, 0);
 
-  const totalDebits = entries.filter(e => e.type === 'debit')
+  const totalDebits = entries
+    .filter(e => e.type === 'debit')
     .reduce((s, e) => s + e.amount, 0);
 
   /* ===================== PDF ===================== */
@@ -204,7 +208,9 @@ const AdminLedger = () => {
       'https://mxybuexkbiprxxkyrllg.supabase.co/storage/v1/object/public/Avatars/logo.jpg';
 
     const img = new Image();
+    img.crossOrigin = 'anonymous';
     img.src = logo;
+
     img.onload = () => {
       doc.addImage(img, 'PNG', 14, 10, 30, 18);
       doc.text('Ledger Report', 105, 40, { align: 'center' });
@@ -216,9 +222,25 @@ const AdminLedger = () => {
           e.created_at ? format(new Date(e.created_at), 'dd MMM yyyy') : '',
           e.type,
           e.reason,
-          e.amount,
+          e.amount.toLocaleString('en-IN'),
         ]),
       });
+
+      doc.text(
+        `Total Credits: ₹${totalCredits.toLocaleString('en-IN')}`,
+        14,
+        (doc as any).lastAutoTable.finalY + 10
+      );
+      doc.text(
+        `Total Debits: ₹${totalDebits.toLocaleString('en-IN')}`,
+        14,
+        (doc as any).lastAutoTable.finalY + 18
+      );
+      doc.text(
+        `Balance: ₹${balance.toLocaleString('en-IN')}`,
+        14,
+        (doc as any).lastAutoTable.finalY + 26
+      );
 
       doc.save('ledger.pdf');
     };
@@ -261,15 +283,27 @@ const AdminLedger = () => {
         </div>
 
         <Card>
-          <CardHeader><CardTitle>Add Transaction</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Add Transaction</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-3">
-            <Input placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} />
-            <Textarea placeholder="Note" value={note} onChange={e => setNote(e.target.value)} />
+            <Input
+              placeholder="Amount"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+            />
+            <Textarea
+              placeholder="Note"
+              value={note}
+              onChange={e => setNote(e.target.value)}
+            />
             <Button onClick={handleAddTransaction}>Add</Button>
           </CardContent>
         </Card>
 
-        <Button variant="outline" onClick={generateLedgerPDF}>Download PDF</Button>
+        <Button variant="outline" onClick={generateLedgerPDF}>
+          Download PDF
+        </Button>
 
       </main>
     </div>
@@ -280,7 +314,7 @@ const Summary = ({ icon, label, value }: any) => (
   <Card>
     <CardContent className="text-center p-4">
       {icon}
-      <p className="font-bold">₹{value}</p>
+      <p className="font-bold">₹{value.toLocaleString('en-IN')}</p>
       <p className="text-xs">{label}</p>
     </CardContent>
   </Card>

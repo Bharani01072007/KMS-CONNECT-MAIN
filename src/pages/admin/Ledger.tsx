@@ -40,6 +40,10 @@ interface LedgerEntry {
   created_at: string | null;
 }
 
+interface Attendance {
+  attendance_type: 'full' | 'half' | null;
+}
+
 /* ===================== COMPONENT ===================== */
 
 const AdminLedger = () => {
@@ -53,6 +57,7 @@ const AdminLedger = () => {
 
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [balance, setBalance] = useState(0);
+  const [calculatedSalary, setCalculatedSalary] = useState(0);
 
   const [entryType, setEntryType] = useState<'credit' | 'debit'>('credit');
   const [amount, setAmount] = useState('');
@@ -65,7 +70,10 @@ const AdminLedger = () => {
   }, []);
 
   useEffect(() => {
-    if (selectedEmployee) fetchLedger();
+    if (selectedEmployee) {
+      fetchLedger();
+      calculateSalaryFromAttendance();
+    }
   }, [selectedEmployee, selectedMonth]);
 
   const fetchEmployees = async () => {
@@ -99,18 +107,55 @@ const AdminLedger = () => {
     setBalance(total?.balance ?? 0);
   };
 
-  /* ===================== SAFE NOTIFICATION ===================== */
+  /* ===================== SALARY CALCULATION (FIX) ===================== */
 
-  const sendSalaryNotification = async (
-    empUserId: string,
-    month: Date
-  ) => {
+  const calculateSalaryFromAttendance = async () => {
+    if (!selectedEmployee) return;
+
+    const monthStart = format(selectedMonth, 'yyyy-MM-01');
+    const monthEnd = format(
+      new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0),
+      'yyyy-MM-dd'
+    );
+
+    const { data: emp } = await supabase
+      .from('employees')
+      .select('daily_wage')
+      .eq('user_id', selectedEmployee)
+      .maybeSingle();
+
+    const dailyWage = emp?.daily_wage ?? 0;
+    if (!dailyWage) {
+      setCalculatedSalary(0);
+      return;
+    }
+
+    const { data: attendance } = await supabase
+      .from('attendance')
+      .select('attendance_type')
+      .eq('emp_user_id', selectedEmployee)
+      .gte('day', monthStart)
+      .lte('day', monthEnd);
+
+    let total = 0;
+
+    (attendance as Attendance[] | null)?.forEach((a) => {
+      if (a.attendance_type === 'full') total += dailyWage;
+      if (a.attendance_type === 'half') total += dailyWage / 2;
+    });
+
+    setCalculatedSalary(total);
+  };
+
+  /* ===================== NOTIFICATION ===================== */
+
+  const sendSalaryNotification = async (empUserId: string) => {
     try {
       await supabase.from('notifications').insert({
         user_id: empUserId,
         title: 'Salary Settled',
         body: `Your salary for ${format(
-          month,
+          selectedMonth,
           'MMMM yyyy'
         )} has been settled successfully.`,
       });
@@ -138,33 +183,33 @@ const AdminLedger = () => {
     toast({ title: 'Transaction added' });
   };
 
-  /* ===================== SALARY SETTLEMENT ===================== */
+  /* ===================== SALARY SETTLEMENT (FIXED) ===================== */
 
   const handleSettleSalary = async () => {
-    if (balance <= 0 || !selectedEmployee) return;
+    if (calculatedSalary <= 0 || !selectedEmployee) return;
 
     await supabase.from('money_ledger').insert({
       emp_user_id: selectedEmployee,
-      amount: balance,
+      amount: calculatedSalary,
       type: 'debit',
       reason: 'Salary Paid - Full Settlement',
       month_year: format(selectedMonth, 'yyyy-MM-01'),
     });
 
-    await sendSalaryNotification(selectedEmployee, selectedMonth);
-
+    await sendSalaryNotification(selectedEmployee);
     fetchLedger();
-    toast({ title: 'Salary Settled' });
+
+    toast({ title: 'Salary Settled Successfully' });
   };
 
   /* ===================== TOTALS ===================== */
 
   const totalCredits = entries
-    .filter(e => e.type === 'credit')
+    .filter((e) => e.type === 'credit')
     .reduce((s, e) => s + e.amount, 0);
 
   const totalDebits = entries
-    .filter(e => e.type === 'debit')
+    .filter((e) => e.type === 'debit')
     .reduce((s, e) => s + e.amount, 0);
 
   /* ===================== UI ===================== */
@@ -174,7 +219,7 @@ const AdminLedger = () => {
       <Header title="Ledger Management" backTo="/admin/dashboard" />
 
       <main className="p-4 max-w-4xl mx-auto space-y-4">
-        {/* UI remains unchanged */}
+        {/* UI UNCHANGED */}
       </main>
     </div>
   );

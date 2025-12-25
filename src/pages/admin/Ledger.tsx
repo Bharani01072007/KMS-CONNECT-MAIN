@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { supabase } from '@/integrations/supabase/client';
 import Header from '@/components/Header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,14 +15,21 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from '@/hooks/use-toast';
-import { format, startOfMonth } from 'date-fns';
-import { IndianRupee } from 'lucide-react';
+import {
+  Wallet,
+  TrendingUp,
+  TrendingDown,
+  IndianRupee,
+  Calendar,
+} from 'lucide-react';
+import { format, startOfMonth, subMonths } from 'date-fns';
 
-/* ================= TYPES ================= */
+/* ===================== TYPES ===================== */
 
 interface Employee {
   user_id: string;
   full_name: string | null;
+  email: string | null;
 }
 
 interface LedgerEntry {
@@ -31,14 +40,14 @@ interface LedgerEntry {
   created_at: string;
 }
 
-/* ================= COMPONENT ================= */
+/* ===================== COMPONENT ===================== */
 
 const AdminLedger = () => {
+  const printRef = useRef<HTMLDivElement>(null);
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState(
-    startOfMonth(new Date())
-  );
+  const [selectedMonth, setSelectedMonth] = useState(startOfMonth(new Date()));
 
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [balance, setBalance] = useState(0);
@@ -47,20 +56,22 @@ const AdminLedger = () => {
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
 
-  /* ================= FETCH ================= */
+  /* ===================== FETCH ===================== */
 
   useEffect(() => {
     fetchEmployees();
   }, []);
 
   useEffect(() => {
-    if (selectedEmployee) fetchLedger();
+    if (!selectedEmployee) return;
+    calculateMonthlySalary(); // 🔥 SAFE ADDITION
+    fetchLedger();
   }, [selectedEmployee, selectedMonth]);
 
   const fetchEmployees = async () => {
     const { data } = await supabase
       .from('employee_directory')
-      .select('user_id, full_name')
+      .select('user_id, full_name, email')
       .eq('role', 'employee');
 
     setEmployees(data || []);
@@ -89,10 +100,62 @@ const AdminLedger = () => {
     setBalance(credit - debit);
   };
 
-  /* ================= ACTIONS ================= */
+  /* ===================== 🔥 SALARY AUTO CALC ===================== */
 
-  const addTransaction = async () => {
-    if (!amount || !selectedEmployee) return;
+  const calculateMonthlySalary = async () => {
+    const monthStart = format(selectedMonth, 'yyyy-MM-01');
+    const monthEnd = format(
+      new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0),
+      'yyyy-MM-dd'
+    );
+
+    const { data: attendance } = await supabase
+      .from('attendance')
+      .select('attendance_type')
+      .eq('emp_user_id', selectedEmployee)
+      .gte('day', monthStart)
+      .lte('day', monthEnd);
+
+    if (!attendance || attendance.length === 0) return;
+
+    const fullDays = attendance.filter(a => a.attendance_type === 'full').length;
+    const halfDays = attendance.filter(a => a.attendance_type === 'half').length;
+
+    const { data: emp } = await supabase
+      .from('employees')
+      .select('daily_wage')
+      .eq('user_id', selectedEmployee)
+      .maybeSingle();
+
+    if (!emp?.daily_wage) return;
+
+    const salary =
+      fullDays * emp.daily_wage +
+      halfDays * (emp.daily_wage / 2);
+
+    // ❌ Avoid duplicate credit
+    const { data: existing } = await supabase
+      .from('money_ledger')
+      .select('id')
+      .eq('emp_user_id', selectedEmployee)
+      .eq('month_year', monthStart)
+      .eq('reason', 'Monthly Salary');
+
+    if (existing?.length) return;
+
+    await supabase.from('money_ledger').insert({
+      emp_user_id: selectedEmployee,
+      amount: salary,
+      type: 'credit',
+      reason: 'Monthly Salary',
+      month_year: monthStart,
+    });
+  };
+
+  /* ===================== MANUAL TRANSACTION ===================== */
+
+  const handleAddTransaction = async () => {
+    if (!amount) return;
 
     await supabase.from('money_ledger').insert({
       emp_user_id: selectedEmployee,
@@ -108,35 +171,41 @@ const AdminLedger = () => {
     toast({ title: 'Transaction added' });
   };
 
-  const settleSalary = async () => {
+  /* ===================== SALARY SETTLEMENT ===================== */
+
+  const handleSettleSalary = async () => {
     if (balance <= 0) return;
 
     await supabase.from('money_ledger').insert({
       emp_user_id: selectedEmployee,
       amount: balance,
       type: 'debit',
-      reason: 'Salary Settled',
+      reason: 'Salary Paid - Full Settlement',
       month_year: format(selectedMonth, 'yyyy-MM-01'),
     });
 
     await supabase.from('notifications').insert({
       user_id: selectedEmployee,
       title: 'Salary Settled',
-      body: `Your salary for ${format(selectedMonth, 'MMMM yyyy')} is settled.`,
+      body: `Your salary for ${format(
+        selectedMonth,
+        'MMMM yyyy'
+      )} has been settled.`,
+      read: false,
     });
 
     fetchLedger();
-    toast({ title: 'Salary settled successfully' });
+    toast({ title: 'Salary settled' });
   };
 
-  /* ================= UI ================= */
+  /* ===================== UI ===================== */
 
   return (
     <div className="min-h-screen bg-background">
       <Header title="Ledger Management" backTo="/admin/dashboard" />
 
-      <main className="p-4 max-w-4xl mx-auto space-y-4">
-        {/* EMPLOYEE SELECT */}
+      <main className="p-4 max-w-4xl mx-auto space-y-4" ref={printRef}>
+        {/* Employee */}
         <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
           <SelectTrigger>
             <SelectValue placeholder="Select employee" />
@@ -150,17 +219,17 @@ const AdminLedger = () => {
           </SelectContent>
         </Select>
 
-        {/* BALANCE */}
+        {/* Balance */}
         <Card>
           <CardHeader>
-            <CardTitle>Current Balance</CardTitle>
+            <CardTitle>Balance</CardTitle>
           </CardHeader>
           <CardContent className="flex items-center gap-2 text-xl">
             <IndianRupee /> {balance}
           </CardContent>
         </Card>
 
-        {/* ADD TRANSACTION */}
+        {/* Manual Entry */}
         <Card>
           <CardHeader>
             <CardTitle>Add Transaction</CardTitle>
@@ -191,14 +260,14 @@ const AdminLedger = () => {
               onChange={e => setNote(e.target.value)}
             />
 
-            <Button onClick={addTransaction}>Add</Button>
+            <Button onClick={handleAddTransaction}>Add</Button>
           </CardContent>
         </Card>
 
-        {/* SETTLE SALARY */}
+        {/* Settle */}
         <Button
           disabled={balance <= 0}
-          onClick={settleSalary}
+          onClick={handleSettleSalary}
           className="w-full"
         >
           Settle Salary

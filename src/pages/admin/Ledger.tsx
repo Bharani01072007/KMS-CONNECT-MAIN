@@ -58,6 +58,8 @@ const AdminLedger = () => {
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
 
+  /* ===================== FETCH ===================== */
+
   useEffect(() => {
     fetchEmployees();
   }, []);
@@ -97,6 +99,28 @@ const AdminLedger = () => {
     setBalance(total?.balance ?? 0);
   };
 
+  /* ===================== SAFE NOTIFICATION ===================== */
+
+  const sendSalaryNotification = async (
+    empUserId: string,
+    month: Date
+  ) => {
+    try {
+      await supabase.from('notifications').insert({
+        user_id: empUserId,
+        title: 'Salary Settled',
+        body: `Your salary for ${format(
+          month,
+          'MMMM yyyy'
+        )} has been settled successfully.`,
+      });
+    } catch (e) {
+      console.error('Salary notification failed', e);
+    }
+  };
+
+  /* ===================== MANUAL TRANSACTION ===================== */
+
   const handleAddTransaction = async () => {
     if (!amount || !selectedEmployee) return;
 
@@ -127,15 +151,7 @@ const AdminLedger = () => {
       month_year: format(selectedMonth, 'yyyy-MM-01'),
     });
 
-    await supabase.from('notifications').insert({
-      user_id: selectedEmployee,
-      title: 'Salary Settled',
-      body: `Your salary for ${format(
-        selectedMonth,
-        'MMMM yyyy'
-      )} has been settled successfully.`,
-      read: false,
-    });
+    await sendSalaryNotification(selectedEmployee, selectedMonth);
 
     fetchLedger();
     toast({ title: 'Salary Settled' });
@@ -158,7 +174,7 @@ const AdminLedger = () => {
       <Header title="Ledger Management" backTo="/admin/dashboard" />
 
       <main className="p-4 max-w-4xl mx-auto space-y-4">
-        {/* UI unchanged */}
+        {/* UI remains unchanged */}
       </main>
     </div>
   );

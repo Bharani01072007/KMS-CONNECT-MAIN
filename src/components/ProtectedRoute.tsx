@@ -9,32 +9,26 @@ interface ProtectedRouteProps {
 const ProtectedRoute = ({ children, allowedRoles }: ProtectedRouteProps) => {
   const { user, role, loading } = useAuth();
 
-  // 🔑 Only wait for AUTH, not ROLE
+  // ⏳ Wait for auth once
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     );
   }
 
-  // ❌ Not logged in → go to auth
+  // ❌ Not logged in
   if (!user) {
     return <Navigate to="/auth" replace />;
   }
 
-  /**
-   * 🔐 Role-based protection
-   * - If role exists and is NOT allowed → redirect
-   * - If role is missing → allow render (fallback)
-   */
+  // 🔐 Role restriction
   if (allowedRoles && role && !allowedRoles.includes(role)) {
-    return role === 'admin'
-      ? <Navigate to="/admin/dashboard" replace />
-      : <Navigate to="/employee/dashboard" replace />;
+    return <Navigate to="/" replace />;
   }
 
-  // ✅ Access granted
+  // ✅ Allowed
   return <>{children}</>;
 };
 

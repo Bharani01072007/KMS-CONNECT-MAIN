@@ -65,7 +65,8 @@ const AdminLedger = () => {
   }, []);
 
   useEffect(() => {
-    if (selectedEmployee) fetchLedger();
+    if (!selectedEmployee) return;
+    fetchLedger();
   }, [selectedEmployee, selectedMonth]);
 
   const fetchEmployees = async () => {
@@ -96,7 +97,7 @@ const AdminLedger = () => {
       .eq('month_year', monthStart)
       .maybeSingle();
 
-    setBalance(total?.balance ?? 0);
+    setBalance(Number(total?.balance ?? 0));
   };
 
   /* ===================== MANUAL TRANSACTION ===================== */
@@ -104,20 +105,17 @@ const AdminLedger = () => {
   const handleAddTransaction = async () => {
     if (!amount || !selectedEmployee) return;
 
-    const monthStart = format(selectedMonth, 'yyyy-MM-01');
-
     await supabase.from('money_ledger').insert({
       emp_user_id: selectedEmployee,
       amount: Number(amount),
       type: entryType,
       reason: note || (entryType === 'credit' ? 'Manual Credit' : 'Manual Debit'),
-      month_year: monthStart,
+      month_year: format(selectedMonth, 'yyyy-MM-01'),
     });
 
     setAmount('');
     setNote('');
     fetchLedger();
-
     toast({ title: 'Transaction added successfully' });
   };
 
@@ -126,21 +124,12 @@ const AdminLedger = () => {
   const handleSettleSalary = async () => {
     if (balance <= 0) return;
 
-    const monthStart = format(selectedMonth, 'yyyy-MM-01');
-
     await supabase.from('money_ledger').insert({
       emp_user_id: selectedEmployee,
       amount: balance,
       type: 'debit',
       reason: 'Salary Paid - Full Settlement',
-      month_year: monthStart,
-    });
-
-    await supabase.from('notifications').insert({
-      user_id: selectedEmployee,
-      title: 'Salary Settled',
-      body: `Your salary for ${format(selectedMonth, 'MMMM yyyy')} has been settled.`,
-      read: false,
+      month_year: format(selectedMonth, 'yyyy-MM-01'),
     });
 
     fetchLedger();
@@ -172,28 +161,53 @@ const AdminLedger = () => {
     const emp = employees.find(e => e.user_id === selectedEmployee);
     const doc = new jsPDF();
 
+    const LOGO =
+      'https://mxybuexkbiprxxkyrllg.supabase.co/storage/v1/object/public/Avatars/logo.jpg';
+
     const title =
       mode === 'month'
         ? `Monthly Ledger – ${format(selectedMonth, 'MMMM yyyy')}`
         : `Yearly Ledger – ${format(selectedMonth, 'yyyy')}`;
 
-    doc.setFontSize(14);
-    doc.text('KMS & Co', 14, 15);
-    doc.text(title, 14, 25);
-    doc.text(`Employee: ${emp?.full_name || emp?.email}`, 14, 32);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = LOGO;
 
-    autoTable(doc, {
-      startY: 40,
-      head: [['Date', 'Type', 'Reason', 'Amount']],
-      body: entries.map(e => [
-        e.created_at ? format(new Date(e.created_at), 'dd MMM yyyy') : '',
-        e.type.toUpperCase(),
-        e.reason || '',
-        `₹${e.amount}`,
-      ]),
-    });
+    img.onload = () => {
+      doc.addImage(img, 'PNG', 14, 10, 30, 18);
 
-    doc.save(`${title}.pdf`);
+      doc.setFontSize(16);
+      doc.text('KMS & Co', 50, 18);
+      doc.setFontSize(10);
+      doc.text('Coimbatore, Tamil Nadu, India', 50, 26);
+
+      doc.setFontSize(14);
+      doc.text(title, 105, 42, { align: 'center' });
+
+      doc.setFontSize(10);
+      doc.text(`Employee: ${emp?.full_name || emp?.email}`, 14, 52);
+      doc.text(`Generated: ${format(new Date(), 'dd MMM yyyy')}`, 14, 58);
+
+      autoTable(doc, {
+        startY: 66,
+        head: [['Date', 'Type', 'Reason', 'Amount (₹)']],
+        body: entries.map(e => [
+          e.created_at ? format(new Date(e.created_at), 'dd MMM yyyy') : '',
+          e.type.toUpperCase(),
+          e.reason || '',
+          e.amount.toFixed(2),
+        ]),
+      });
+
+      const y = (doc as any).lastAutoTable.finalY + 10;
+
+      doc.setFontSize(11);
+      doc.text(`Total Credits : ₹${totalCredits.toFixed(2)}`, 14, y);
+      doc.text(`Total Debits  : ₹${totalDebits.toFixed(2)}`, 14, y + 8);
+      doc.text(`Balance       : ₹${balance.toFixed(2)}`, 14, y + 16);
+
+      doc.save(`${title}.pdf`);
+    };
   };
 
   /* ===================== UI ===================== */
@@ -270,17 +284,8 @@ const AdminLedger = () => {
                 <CardTitle>Add Transaction</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="flex gap-2">
-                  <Button onClick={() => setEntryType('credit')}>Credit</Button>
-                  <Button variant="outline" onClick={() => setEntryType('debit')}>Debit</Button>
-                  <Button variant="secondary" onClick={handleSettleSalary} disabled={balance <= 0}>
-                    Salary Payment
-                  </Button>
-                </div>
-
                 <Input placeholder="Amount" value={amount} onChange={(e) => setAmount(e.target.value)} />
                 <Textarea placeholder="Reason" value={note} onChange={(e) => setNote(e.target.value)} />
-
                 <Button className="w-full" onClick={handleAddTransaction}>
                   Add Transaction
                 </Button>
@@ -308,7 +313,7 @@ const AdminLedger = () => {
                       </p>
                     </div>
                     <p className={`font-bold ${e.type === 'credit' ? 'text-green-600' : 'text-red-600'}`}>
-                      {e.type === 'credit' ? '+' : '-'}₹{e.amount}
+                      {e.type === 'credit' ? '+' : '-'}₹{e.amount.toFixed(2)}
                     </p>
                   </div>
                 ))}
@@ -327,7 +332,7 @@ const Summary = ({ icon, label, value }: any) => (
   <Card>
     <CardContent className="p-4 text-center">
       {icon}
-      <p className="text-lg font-bold">₹{value}</p>
+      <p className="text-lg font-bold">₹{Number(value).toFixed(2)}</p>
       <p className="text-xs text-muted-foreground">{label}</p>
     </CardContent>
   </Card>

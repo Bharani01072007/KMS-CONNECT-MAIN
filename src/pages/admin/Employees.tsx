@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import Header from "@/components/Header";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "@/hooks/use-toast";
+
 import {
   Users,
   Edit,
@@ -35,6 +37,7 @@ import {
   XCircle,
   Plane,
 } from "lucide-react";
+
 import {
   format,
   startOfMonth,
@@ -104,10 +107,6 @@ const AdminEmployees = () => {
 
   /* ===================== FETCH EMPLOYEES ===================== */
 
-  useEffect(() => {
-    fetchEmployees();
-  }, []);
-
   const fetchEmployees = async () => {
     const { data } = await supabase
       .from("employee_directory")
@@ -123,10 +122,64 @@ const AdminEmployees = () => {
     if (siteData) setSites(siteData);
   };
 
+  /* ===================== REALTIME (SAFE) ===================== */
+
+  useEffect(() => {
+    fetchEmployees();
+
+    const channel = supabase
+      .channel("admin-employees-realtime")
+
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "employee_directory" },
+        () => {
+          fetchEmployees();
+        }
+      )
+
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "employees" },
+        () => {
+          fetchEmployees();
+        }
+      )
+
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   /* ===================== MONTH DATA ===================== */
 
   useEffect(() => {
-    if (selectedEmployee?.user_id) fetchMonthData();
+    if (!selectedEmployee?.user_id) return;
+
+    fetchMonthData();
+
+    const channel = supabase
+      .channel(`emp-month-${selectedEmployee.user_id}`)
+
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance" },
+        () => fetchMonthData()
+      )
+
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "holidays" },
+        () => fetchMonthData()
+      )
+
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [selectedEmployee, currentMonth]);
 
   const fetchMonthData = async () => {
@@ -169,31 +222,6 @@ const AdminEmployees = () => {
 
   /* ===================== HELPERS ===================== */
 
-  const isCompanyLeave = (dateStr: string) =>
-    holidays.some(h => h.holiday_date === dateStr);
-
-  const getDayStatus = (date: Date) => {
-    const dateStr = format(date, "yyyy-MM-dd");
-    if (isSunday(date)) return "sunday";
-    if (isCompanyLeave(dateStr)) return "companyLeave";
-
-    const att = attendance.find(a => a.day === dateStr);
-    if (att?.checkout_at) return "present";
-    if (att?.checkin_at) return "half";
-    return "absent";
-  };
-
-  const getColor = (status: string) => {
-    switch (status) {
-      case "present": return "bg-green-500";
-      case "half": return "bg-yellow-500";
-      case "absent": return "bg-red-400";
-      case "companyLeave": return "bg-violet-500";
-      case "sunday": return "bg-gray-300 dark:bg-gray-600";
-      default: return "bg-gray-200";
-    }
-  };
-
   const getSiteName = (siteId: string | null) =>
     sites.find(s => s.id === siteId)?.name || "Not assigned";
 
@@ -214,11 +242,14 @@ const AdminEmployees = () => {
     if (!selectedEmployee?.user_id) return;
 
     setIsSaving(true);
+
     const { error } = await supabase
       .from("employees")
       .update({
         designation: editForm.designation || null,
-        daily_wage: editForm.daily_wage ? parseFloat(editForm.daily_wage) : null,
+        daily_wage: editForm.daily_wage
+          ? Number(editForm.daily_wage)
+          : null,
         site_id: editForm.site_id || null,
       })
       .eq("user_id", selectedEmployee.user_id);
@@ -230,6 +261,7 @@ const AdminEmployees = () => {
       setIsEditOpen(false);
       fetchEmployees();
     }
+
     setIsSaving(false);
   };
 
@@ -290,92 +322,6 @@ const AdminEmployees = () => {
           </CardContent>
         </Card>
 
-        {/* MONTHLY ATTENDANCE */}
-        <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center">
-                Monthly Attendance
-                <Button variant="ghost" size="icon" className="ml-auto">
-                  <X className="h-4 w-4" />
-                </Button>
-              </DialogTitle>
-            </DialogHeader>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Calendar className="h-4 w-4" />
-                  {format(currentMonth, "MMMM yyyy")}
-                </CardTitle>
-              </CardHeader>
-
-              <CardContent>
-                <div className="flex justify-between mb-3">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
-                  >
-                    <ChevronLeft />
-                  </Button>
-
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
-                    disabled={isSameMonth(currentMonth, new Date())}
-                  >
-                    <ChevronRight />
-                  </Button>
-                </div>
-
-                <div className="grid grid-cols-7 gap-1">
-                  {eachDayOfInterval({
-                    start: startOfMonth(currentMonth),
-                    end: endOfMonth(currentMonth),
-                  }).map(date => {
-                    const status = getDayStatus(date);
-                    return (
-                      <div key={date.toISOString()} className="text-center">
-                        <span className="text-xs">{format(date, "d")}</span>
-                        <div
-                          className={`w-3 h-3 mx-auto rounded-full ${getColor(
-                            status
-                          )}`}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="grid grid-cols-4 gap-2 mt-4">
-                  <SummaryBox
-                    icon={<CheckCircle className="text-green-500" />}
-                    label="Present"
-                    value={summary.present}
-                  />
-                  <SummaryBox
-                    icon={<Clock className="text-yellow-500" />}
-                    label="Half Day"
-                    value={summary.half}
-                  />
-                  <SummaryBox
-                    icon={<Plane className="text-violet-500" />}
-                    label="Company Leave"
-                    value={summary.companyLeave}
-                  />
-                  <SummaryBox
-                    icon={<XCircle className="text-red-400" />}
-                    label="Absent"
-                    value={summary.absent}
-                  />
-                </div>
-              </CardContent>
-            </Card>
-          </DialogContent>
-        </Dialog>
-
         {/* EDIT DIALOG */}
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
           <DialogContent>
@@ -435,17 +381,5 @@ const AdminEmployees = () => {
     </div>
   );
 };
-
-/* ===================== SUMMARY BOX ===================== */
-
-const SummaryBox = ({ icon, label, value }: any) => (
-  <Card>
-    <CardContent className="p-3 text-center">
-      {icon}
-      <p className="text-lg font-bold">{value}</p>
-      <p className="text-xs text-muted-foreground">{label}</p>
-    </CardContent>
-  </Card>
-);
 
 export default AdminEmployees;

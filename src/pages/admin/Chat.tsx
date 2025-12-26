@@ -42,6 +42,7 @@ const AdminChat = () => {
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
+  const channelRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -68,22 +69,12 @@ const AdminChat = () => {
     if (data) setEmployee(data);
   }, [employeeId]);
 
-  /* ===================== FETCH MESSAGES ===================== */
-
-  const fetchMessages = useCallback(async (tId: string) => {
-    const { data, error } = await supabase
-      .from("messages")
-      .select("*")
-      .eq("thread_id", tId)
-      .order("created_at", { ascending: true });
-
-    if (!error && data) setMessages(data);
-  }, []);
-
   /* ===================== INIT ===================== */
 
   useEffect(() => {
     if (!user || !employeeId) return;
+
+    let isMounted = true;
 
     const init = async () => {
       setIsLoading(true);
@@ -93,9 +84,8 @@ const AdminChat = () => {
       const tId = getThreadId(user.id, employeeId);
       setThreadId(tId);
 
-      await fetchMessages(tId);
-
-      const channel = supabase
+      /* ✅ REALTIME SUBSCRIBE FIRST */
+      channelRef.current = supabase
         .channel(`chat-${tId}`)
         .on(
           "postgres_changes",
@@ -114,13 +104,30 @@ const AdminChat = () => {
         )
         .subscribe();
 
-      setIsLoading(false);
+      /* ✅ FETCH EXISTING MESSAGES */
+      const { data } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("thread_id", tId)
+        .order("created_at", { ascending: true });
 
-      return () => supabase.removeChannel(channel);
+      if (isMounted) {
+        setMessages(data || []);
+        setIsLoading(false);
+      }
     };
 
     init();
-  }, [user, employeeId, fetchEmployee, fetchMessages]);
+
+    /* ✅ CLEANUP (CRITICAL FIX) */
+    return () => {
+      isMounted = false;
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+  }, [user, employeeId, fetchEmployee]);
 
   /* ===================== AUTO SCROLL ===================== */
 
@@ -136,11 +143,12 @@ const AdminChat = () => {
     const content = newMessage.trim();
     setIsSending(true);
 
-    const optimisticId = `temp-${Date.now()}`;
+    const tempId = `temp-${Date.now()}`;
+
     setMessages((prev) => [
       ...prev,
       {
-        id: optimisticId,
+        id: tempId,
         content,
         sender_id: user.id,
         recipient_id: employeeId,
@@ -158,7 +166,6 @@ const AdminChat = () => {
         sender_id: user.id,
         recipient_id: employeeId,
         content,
-        metadata: {},
       })
       .select()
       .single();
@@ -169,12 +176,12 @@ const AdminChat = () => {
         description: error.message,
         variant: "destructive",
       });
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setNewMessage(content);
-    } else if (data) {
+    } else {
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === optimisticId ? { ...data, pending: false } : m
+          m.id === tempId ? { ...data, pending: false } : m
         )
       );
     }

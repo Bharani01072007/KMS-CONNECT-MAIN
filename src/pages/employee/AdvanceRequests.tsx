@@ -35,7 +35,31 @@ const EmployeeAdvanceRequests = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (user) fetchData();
+    if (!user) return;
+
+    fetchData();
+
+    /* ===================== 🔴 REALTIME ===================== */
+
+    const channel = supabase
+      .channel(`employee-advance-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "advance_requests",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          fetchData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   /* ===================== FETCH ===================== */
@@ -66,10 +90,10 @@ const EmployeeAdvanceRequests = () => {
     setIsSubmitting(true);
 
     const { error } = await supabase.from("advance_requests").insert({
-      user_id: user!.id,              // ✅ FIXED
+      user_id: user!.id,
       amount: Number(amount),
       reason: reason || null,
-      status: "pending",              // ✅ REQUIRED
+      status: "pending",
     });
 
     if (error) {
@@ -86,7 +110,6 @@ const EmployeeAdvanceRequests = () => {
     toast({ title: "Advance request submitted" });
     setAmount("");
     setReason("");
-    fetchData();
     setIsSubmitting(false);
   };
 

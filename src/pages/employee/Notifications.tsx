@@ -27,8 +27,7 @@ const EmployeeNotifications = () => {
 
     fetchNotifications();
 
-    /* ===================== REALTIME LISTENER ===================== */
-
+    /* ===================== REALTIME ===================== */
     const channel = supabase
       .channel(`employee-notifications-${user.id}`)
       .on(
@@ -40,15 +39,9 @@ const EmployeeNotifications = () => {
           filter: `user_id=eq.${user.id}`,
         },
         (payload) => {
-          const newNotification: Notification = {
-            id: payload.new.id,
-            title: payload.new.title,
-            body: payload.new.body,
-            created_at: payload.new.created_at,
-            read: payload.new.read,
-          };
+          const newItem = payload.new as Notification;
 
-          setNotifications((prev) => [newNotification, ...prev]);
+          setNotifications((prev) => [newItem, ...prev]);
         }
       )
       .subscribe();

@@ -27,6 +27,27 @@ const AdminHolidays = () => {
 
   useEffect(() => {
     fetchHolidays();
+
+    /* ===================== 🔴 REALTIME ===================== */
+
+    const channel = supabase
+      .channel("admin-holidays-realtime")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "holidays",
+        },
+        () => {
+          fetchHolidays();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   /* ===================== FETCH ===================== */
@@ -68,7 +89,6 @@ const AdminHolidays = () => {
       toast({ title: "Company holiday added" });
       setDate("");
       setDescription("");
-      fetchHolidays();
     }
 
     setLoading(false);
@@ -84,7 +104,6 @@ const AdminHolidays = () => {
 
     if (!error) {
       toast({ title: "Holiday removed" });
-      fetchHolidays();
     }
   };
 

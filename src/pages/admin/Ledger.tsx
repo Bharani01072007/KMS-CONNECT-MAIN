@@ -100,6 +100,30 @@ const AdminLedger = () => {
     setBalance(Number(total?.balance ?? 0));
   };
 
+  /* ===================== 🔴 REALTIME (ONLY ADDITION) ===================== */
+
+  useEffect(() => {
+    if (!selectedEmployee) return;
+
+    const channel = supabase
+      .channel(`admin-ledger-${selectedEmployee}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'money_ledger',
+          filter: `emp_user_id=eq.${selectedEmployee}`,
+        },
+        () => fetchLedger()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedEmployee, selectedMonth]);
+
   /* ===================== MANUAL TRANSACTION ===================== */
 
   const handleAddTransaction = async () => {
@@ -146,7 +170,7 @@ const AdminLedger = () => {
     .filter(e => e.type === 'debit')
     .reduce((s, e) => s + e.amount, 0);
 
-  /* ===================== PDF ===================== */
+  /* ===================== PDF (UNCHANGED) ===================== */
 
   const generateLedgerPDF = (mode: 'month' | 'year') => {
     if (!entries.length) {
@@ -217,7 +241,6 @@ const AdminLedger = () => {
       <Header title="Ledger Management" backTo="/admin/dashboard" />
 
       <main className="p-4 max-w-4xl mx-auto space-y-4">
-
         {/* EMPLOYEE SELECT */}
         <Card>
           <CardHeader>
@@ -273,8 +296,8 @@ const AdminLedger = () => {
 
             {/* SUMMARY */}
             <div className="grid grid-cols-3 gap-3">
-              <Summary icon={<TrendingUp className="text-green-600" />} label="Credits" value={totalCredits} />
-              <Summary icon={<TrendingDown className="text-red-600" />} label="Debits" value={totalDebits} />
+              <Summary icon={<TrendingUp />} label="Credits" value={totalCredits} />
+              <Summary icon={<TrendingDown />} label="Debits" value={totalDebits} />
               <Summary icon={<IndianRupee />} label="Balance" value={balance} />
             </div>
 
@@ -284,8 +307,19 @@ const AdminLedger = () => {
                 <CardTitle>Add Transaction</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
+                <Select value={entryType} onValueChange={(v) => setEntryType(v as any)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Transaction Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="credit">Credit</SelectItem>
+                    <SelectItem value="debit">Debit</SelectItem>
+                  </SelectContent>
+                </Select>
+
                 <Input placeholder="Amount" value={amount} onChange={(e) => setAmount(e.target.value)} />
                 <Textarea placeholder="Reason" value={note} onChange={(e) => setNote(e.target.value)} />
+
                 <Button className="w-full" onClick={handleAddTransaction}>
                   Add Transaction
                 </Button>
@@ -312,7 +346,7 @@ const AdminLedger = () => {
                         {e.created_at && format(new Date(e.created_at), 'PPp')}
                       </p>
                     </div>
-                    <p className={`font-bold ${e.type === 'credit' ? 'text-green-600' : 'text-red-600'}`}>
+                    <p className={e.type === 'credit' ? 'text-green-600' : 'text-red-600'}>
                       {e.type === 'credit' ? '+' : '-'}₹{e.amount.toFixed(2)}
                     </p>
                   </div>
@@ -325,8 +359,6 @@ const AdminLedger = () => {
     </div>
   );
 };
-
-/* ===================== SUMMARY ===================== */
 
 const Summary = ({ icon, label, value }: any) => (
   <Card>

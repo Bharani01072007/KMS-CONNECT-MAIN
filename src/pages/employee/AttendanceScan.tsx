@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import Header from '@/components/Header';
@@ -16,6 +16,35 @@ interface AttendanceRecord {
   attendance_type?: 'full' | 'half' | null;
 }
 
+/* ===================== REALTIME HOOK ===================== */
+
+const useRealtimeAttendance = (
+  userId: string | null,
+  callback: () => void
+) => {
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = supabase
+      .channel(`rt-attendance-${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'attendance',
+          filter: `emp_user_id=eq.${userId}`,
+        },
+        callback
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId]);
+};
+
 /* ===================== COMPONENT ===================== */
 
 const AttendanceScan = () => {
@@ -26,12 +55,9 @@ const AttendanceScan = () => {
     useState<AttendanceRecord | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
+  const monthYear = today.slice(0, 7) + '-01';
 
   /* ===================== FETCH ===================== */
-
-  useEffect(() => {
-    if (user) fetchTodayAttendance();
-  }, [user]);
 
   const fetchTodayAttendance = async () => {
     if (!user) return;
@@ -48,8 +74,7 @@ const AttendanceScan = () => {
       return;
     }
 
-    // ✅ TYPE-SAFE MAPPING (CRITICAL FIX)
-    const mappedAttendance: AttendanceRecord = {
+    setTodayAttendance({
       id: data.id,
       day: data.day,
       checkin_at: data.checkin_at,
@@ -58,10 +83,16 @@ const AttendanceScan = () => {
         data.attendance_type === 'full' || data.attendance_type === 'half'
           ? data.attendance_type
           : null,
-    };
-
-    setTodayAttendance(mappedAttendance);
+    });
   };
+
+  /* ===================== REALTIME ===================== */
+
+  useEffect(() => {
+    if (user) fetchTodayAttendance();
+  }, [user]);
+
+  useRealtimeAttendance(user?.id ?? null, fetchTodayAttendance);
 
   /* ===================== CORE ===================== */
 
@@ -69,8 +100,20 @@ const AttendanceScan = () => {
     if (!user) return;
 
     const nowIST = new Date(
-      new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })
+      new Date().toLocaleString('en-US', {
+        timeZone: 'Asia/Kolkata',
+      })
     );
+
+    /* 🔐 SINGLE-SCAN LOCK */
+    if (todayAttendance?.checkout_at) {
+      toast({
+        title: 'Attendance Completed',
+        description: 'You have already checked out today',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     /* -------- CHECK IN -------- */
     if (!todayAttendance) {
@@ -82,57 +125,57 @@ const AttendanceScan = () => {
       });
 
       toast({ title: 'Checked In' });
+      return;
     }
 
     /* -------- CHECK OUT -------- */
-    else if (!todayAttendance.checkout_at) {
-      const checkInTime = new Date(
-        new Date(todayAttendance.checkin_at!).toLocaleString('en-US', {
-          timeZone: 'Asia/Kolkata',
-        })
-      );
+    const checkInTime = new Date(
+      new Date(todayAttendance.checkin_at!).toLocaleString('en-US', {
+        timeZone: 'Asia/Kolkata',
+      })
+    );
 
-      const isHalfDay =
-        checkInTime.getHours() > 10 ||
-        nowIST.getHours() < 13;
+    const isHalfDay =
+      checkInTime.getHours() > 10 || nowIST.getHours() < 13;
 
-      const attendanceType: 'full' | 'half' = isHalfDay ? 'half' : 'full';
+    const attendanceType: 'full' | 'half' = isHalfDay ? 'half' : 'full';
 
-      await supabase
-        .from('attendance')
-        .update({
-          checkout_at: nowIST.toISOString(),
-          attendance_type: attendanceType,
-        })
-        .eq('id', todayAttendance.id);
+    await supabase
+      .from('attendance')
+      .update({
+        checkout_at: nowIST.toISOString(),
+        attendance_type: attendanceType,
+      })
+      .eq('id', todayAttendance.id);
 
-      /* 🔥 CREDIT DAILY WAGE HERE */
-      await creditDailyWage(attendanceType);
+    await creditDailyWage(attendanceType);
 
-      toast({
-        title: 'Checked Out',
-        description:
-          attendanceType === 'half'
-            ? 'Half Day Salary Credited'
-            : 'Full Day Salary Credited',
-      });
-    }
-
-    /* -------- ALREADY DONE -------- */
-    else {
-      toast({
-        title: 'Attendance Completed',
-        variant: 'destructive',
-      });
-    }
-
-    fetchTodayAttendance();
+    toast({
+      title: 'Checked Out',
+      description:
+        attendanceType === 'half'
+          ? 'Half Day Salary Credited'
+          : 'Full Day Salary Credited',
+    });
   };
 
-  /* ===================== SALARY CREDIT ===================== */
+  /* ===================== SALARY CREDIT (SAFE) ===================== */
 
   const creditDailyWage = async (type: 'full' | 'half') => {
     if (!user) return;
+
+    const reason = `Daily Wage (${type.toUpperCase()})`;
+
+    /* 🔄 DUPLICATE PREVENTION */
+    const { data: exists } = await supabase
+      .from('money_ledger')
+      .select('id')
+      .eq('emp_user_id', user.id)
+      .eq('month_year', monthYear)
+      .eq('reason', reason)
+      .maybeSingle();
+
+    if (exists) return;
 
     const { data: emp } = await supabase
       .from('employees')
@@ -149,8 +192,8 @@ const AttendanceScan = () => {
       emp_user_id: user.id,
       amount,
       type: 'credit',
-      reason: `Daily Wage (${type.toUpperCase()})`,
-      month_year: today.slice(0, 7) + '-01',
+      reason,
+      month_year: monthYear,
       created_by: user.id,
     });
   };

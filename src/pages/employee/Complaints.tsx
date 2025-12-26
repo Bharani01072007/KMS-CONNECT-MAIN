@@ -2,7 +2,13 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import Header from '@/components/Header';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription
+} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +31,30 @@ const EmployeeComplaints = () => {
 
   useEffect(() => {
     if (!user) return;
+
     fetchComplaints();
+
+    /* ===================== 🔴 REALTIME ===================== */
+
+    const channel = supabase
+      .channel(`employee-complaints-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'complaints',
+          filter: `raised_by=eq.${user.id}`,
+        },
+        () => {
+          fetchComplaints();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const fetchComplaints = async () => {
@@ -40,7 +69,11 @@ const EmployeeComplaints = () => {
 
   const handleSubmit = async () => {
     if (!complaintText.trim()) {
-      toast({ title: 'Error', description: 'Please enter your complaint', variant: 'destructive' });
+      toast({
+        title: 'Error',
+        description: 'Please enter your complaint',
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -56,11 +89,18 @@ const EmployeeComplaints = () => {
 
       if (error) throw error;
 
-      toast({ title: 'Success', description: 'Complaint submitted successfully' });
+      toast({
+        title: 'Success',
+        description: 'Complaint submitted successfully',
+      });
+
       setComplaintText('');
-      fetchComplaints();
     } catch (error: any) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -69,18 +109,33 @@ const EmployeeComplaints = () => {
   const getStatusBadge = (status: string | null) => {
     switch (status) {
       case 'resolved':
-        return <Badge className="bg-green-500"><CheckCircle className="h-3 w-3 mr-1" />Resolved</Badge>;
+        return (
+          <Badge className="bg-green-500">
+            <CheckCircle className="h-3 w-3 mr-1" />
+            Resolved
+          </Badge>
+        );
       case 'in_progress':
-        return <Badge className="bg-blue-500"><Loader2 className="h-3 w-3 mr-1" />In Progress</Badge>;
+        return (
+          <Badge className="bg-blue-500">
+            <Loader2 className="h-3 w-3 mr-1" />
+            In Progress
+          </Badge>
+        );
       default:
-        return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" />Open</Badge>;
+        return (
+          <Badge variant="secondary">
+            <Clock className="h-3 w-3 mr-1" />
+            Open
+          </Badge>
+        );
     }
   };
 
   return (
     <div className="min-h-screen bg-background">
       <Header title="Complaints" backTo="/employee/dashboard" />
-      
+
       <main className="p-4 max-w-2xl mx-auto space-y-4">
         {/* Submit Complaint Form */}
         <Card>
@@ -89,8 +144,11 @@ const EmployeeComplaints = () => {
               <AlertCircle className="h-5 w-5" />
               Raise a Complaint
             </CardTitle>
-            <CardDescription>Describe your issue and we'll address it</CardDescription>
+            <CardDescription>
+              Describe your issue and we'll address it
+            </CardDescription>
           </CardHeader>
+
           <CardContent className="space-y-4">
             <Textarea
               placeholder="Describe your complaint in detail..."
@@ -98,7 +156,11 @@ const EmployeeComplaints = () => {
               onChange={(e) => setComplaintText(e.target.value)}
               rows={4}
             />
-            <Button onClick={handleSubmit} disabled={isSubmitting} className="w-full">
+            <Button
+              onClick={handleSubmit}
+              disabled={isSubmitting}
+              className="w-full"
+            >
               {isSubmitting ? 'Submitting...' : 'Submit Complaint'}
             </Button>
           </CardContent>
@@ -109,19 +171,31 @@ const EmployeeComplaints = () => {
           <CardHeader>
             <CardTitle>Your Complaints</CardTitle>
           </CardHeader>
+
           <CardContent>
             <div className="space-y-3">
               {complaints.length === 0 ? (
-                <p className="text-center text-muted-foreground py-4">No complaints submitted</p>
+                <p className="text-center text-muted-foreground py-4">
+                  No complaints submitted
+                </p>
               ) : (
                 complaints.map((complaint) => (
-                  <div key={complaint.id} className="p-4 bg-muted/50 rounded-lg">
+                  <div
+                    key={complaint.id}
+                    className="p-4 bg-muted/50 rounded-lg"
+                  >
                     <div className="flex justify-between items-start mb-2">
                       <p className="text-sm text-muted-foreground">
-                        {complaint.created_at ? format(new Date(complaint.created_at), 'PPp') : 'Unknown date'}
+                        {complaint.created_at
+                          ? format(
+                              new Date(complaint.created_at),
+                              'PPp'
+                            )
+                          : 'Unknown date'}
                       </p>
                       {getStatusBadge(complaint.status)}
                     </div>
+
                     <p className="text-sm">{complaint.description}</p>
                   </div>
                 ))

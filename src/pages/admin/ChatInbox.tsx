@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import Header from "@/components/Header";
@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { MessageSquare, ChevronRight } from "lucide-react";
 import { format } from "date-fns";
+
+/* ===================== TYPES ===================== */
 
 interface EmployeeWithMessage {
   user_id: string;
@@ -17,6 +19,15 @@ interface EmployeeWithMessage {
   last_message_sender_id: string | null;
 }
 
+interface MessageRow {
+  sender_id: string;
+  recipient_id: string;
+  content: string;
+  created_at: string;
+}
+
+/* ===================== COMPONENT ===================== */
+
 const AdminChatInbox = () => {
   const navigate = useNavigate();
 
@@ -24,23 +35,38 @@ const AdminChatInbox = () => {
   const [loading, setLoading] = useState(true);
   const [adminId, setAdminId] = useState<string | null>(null);
 
+  const channelRef = useRef<any>(null);
+
   useEffect(() => {
     init();
+
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
   }, []);
+
+  /* ===================== INIT ===================== */
 
   const init = async () => {
     const { data } = await supabase.auth.getUser();
     const uid = data.user?.id || null;
+
     setAdminId(uid);
     await loadInbox(uid);
+
+    if (uid) subscribeRealtime(uid);
   };
 
-  /* ================= LOAD INBOX ================= */
+  /* ===================== LOAD INBOX ===================== */
 
   const loadInbox = async (adminUserId: string | null) => {
     if (!adminUserId) return;
 
     setLoading(true);
+
     try {
       const { data: empData } = await supabase
         .from("employee_directory")
@@ -92,11 +118,64 @@ const AdminChatInbox = () => {
     }
   };
 
-  /* ================= UI ================= */
+  /* ===================== REALTIME SUBSCRIPTION ===================== */
+
+  const subscribeRealtime = (adminUserId: string) => {
+    channelRef.current = supabase
+      .channel("admin-chat-inbox")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+        },
+        payload => {
+          const msg = payload.new as MessageRow;
+
+          // Only react to messages related to admin
+          if (
+            msg.sender_id !== adminUserId &&
+            msg.recipient_id !== adminUserId
+          ) {
+            return;
+          }
+
+          setEmployees(prev =>
+            prev
+              .map(emp => {
+                if (
+                  emp.user_id === msg.sender_id ||
+                  emp.user_id === msg.recipient_id
+                ) {
+                  return {
+                    ...emp,
+                    last_message: msg.content,
+                    last_message_time: msg.created_at,
+                    last_message_sender_id: msg.sender_id,
+                  };
+                }
+                return emp;
+              })
+              .sort((a, b) => {
+                if (!a.last_message_time && !b.last_message_time) return 0;
+                if (!a.last_message_time) return 1;
+                if (!b.last_message_time) return -1;
+                return (
+                  new Date(b.last_message_time).getTime() -
+                  new Date(a.last_message_time).getTime()
+                );
+              })
+          );
+        }
+      )
+      .subscribe();
+  };
+
+  /* ===================== UI ===================== */
 
   return (
     <div className="min-h-screen bg-background">
-      {/* ✅ FIXED HERE */}
       <Header title="Chat Inbox" backTo="/admin/dashboard" />
 
       <main className="p-4 max-w-2xl mx-auto">
@@ -123,7 +202,9 @@ const AdminChatInbox = () => {
                 return (
                   <div
                     key={emp.user_id}
-                    onClick={() => navigate(`/admin/chat/${emp.user_id}`)}
+                    onClick={() =>
+                      navigate(`/admin/chat/${emp.user_id}`)
+                    }
                     className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-muted/50 transition"
                   >
                     <div className="relative">

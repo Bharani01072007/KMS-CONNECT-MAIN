@@ -1,229 +1,322 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
-import Header from '@/components/Header';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Calendar } from '@/components/ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Badge } from '@/components/ui/badge';
-import { toast } from '@/hooks/use-toast';
-import { CalendarIcon, AlertTriangle, CheckCircle, XCircle, Clock } from 'lucide-react';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { cn } from '@/lib/utils';
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import Header from "@/components/Header";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { toast } from "@/hooks/use-toast";
+import {
+  Calendar,
+  CheckCircle,
+  XCircle,
+  Clock,
+  User,
+} from "lucide-react";
+import { format } from "date-fns";
+import { Database } from "@/integrations/supabase/types";
 
-interface LeaveRecord {
+/* ===================== TYPES ===================== */
+
+type LeaveStatus = Database["public"]["Enums"]["leave_status"];
+
+interface LeaveRequest {
   id: string;
   start_date: string;
   end_date: string;
   days: number;
   reason: string | null;
-  status: string;
+  status: LeaveStatus | null;
   created_at: string | null;
+  emp_user_id: string;
+  employee?: { full_name: string | null; email: string | null } | null;
+  daily_wage?: number;
 }
 
-const EmployeeLeaves = () => {
-  const { user } = useAuth();
-  const [date, setDate] = useState<Date>();
-  const [reason, setReason] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [approvedThisMonth, setApprovedThisMonth] = useState(0);
-  const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
+/* ===================== COMPONENT ===================== */
+
+const AdminLeaves = () => {
+  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
+  const [leaveCounts, setLeaveCounts] = useState<Record<string, number>>({});
+  const [isUpdating, setIsUpdating] = useState<string | null>(null);
+
+  const [showWarning, setShowWarning] = useState(false);
+  const [pendingLeave, setPendingLeave] = useState<LeaveRequest | null>(null);
 
   useEffect(() => {
-    if (!user) return;
-    fetchData();
-  }, [user]);
+    fetchLeaves();
+  }, []);
 
-  const fetchData = async () => {
-    const now = new Date();
-    const monthStart = startOfMonth(now).toISOString().split('T')[0];
-    const monthEnd = endOfMonth(now).toISOString().split('T')[0];
+  /* ===================== FETCH LEAVES ===================== */
 
-    // Count approved leaves this month
-    const { count } = await supabase
-      .from('leaves')
-      .select('*', { count: 'exact', head: true })
-      .eq('emp_user_id', user!.id)
-      .eq('status', 'approved')
-      .gte('start_date', monthStart)
-      .lte('start_date', monthEnd);
-
-    setApprovedThisMonth(count ?? 0);
-
-    // Fetch all leaves
+  const fetchLeaves = async () => {
     const { data } = await supabase
-      .from('leaves')
-      .select('id, start_date, end_date, days, reason, status, created_at')
-      .eq('emp_user_id', user!.id)
-      .order('start_date', { ascending: false });
+      .from("leaves")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-    if (data) setLeaves(data);
+    if (!data) return;
+
+    const userIds = [...new Set(data.map(l => l.emp_user_id))];
+
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("auth_uid, full_name, email")
+      .in("auth_uid", userIds);
+
+    const { data: wages } = await supabase
+      .from("employees")
+      .select("user_id, daily_wage")
+      .in("user_id", userIds);
+
+    const enriched: LeaveRequest[] = data.map(leave => ({
+      ...leave,
+      employee:
+        profiles?.find(p => p.auth_uid === leave.emp_user_id) || null,
+      daily_wage:
+        wages?.find(w => w.user_id === leave.emp_user_id)?.daily_wage || 0,
+    }));
+
+    setLeaves(enriched);
+    calculateLeaveCounts(enriched);
   };
 
-  const handleSubmit = async () => {
-    if (!date) {
-      toast({ title: 'Error', description: 'Please select a date', variant: 'destructive' });
+  /* ===================== LEAVE COUNT ===================== */
+
+  const getApprovedLeavesThisMonth = async (
+    empUserId: string,
+    monthStart: string
+  ) => {
+    const nextMonth = new Date(monthStart);
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+
+    const { count } = await supabase
+      .from("leaves")
+      .select("*", { count: "exact", head: true })
+      .eq("emp_user_id", empUserId)
+      .eq("status", "approved")
+      .gte("start_date", monthStart)
+      .lt("start_date", nextMonth.toISOString().slice(0, 10));
+
+    return count || 0;
+  };
+
+  const calculateLeaveCounts = async (leaves: LeaveRequest[]) => {
+    const counts: Record<string, number> = {};
+
+    for (const leave of leaves) {
+      const monthStart = leave.start_date.slice(0, 7) + "-01";
+      const approvedCount = await getApprovedLeavesThisMonth(
+        leave.emp_user_id,
+        monthStart
+      );
+      counts[leave.id] = approvedCount + 1;
+    }
+
+    setLeaveCounts(counts);
+  };
+
+  /* ===================== NOTIFICATION ===================== */
+
+  const notifyEmployee = async (
+    empUserId: string,
+    title: string,
+    body: string
+  ) => {
+    await supabase.from("notifications").insert({
+      user_id: empUserId,
+      title,
+      body,
+    });
+  };
+
+  /* ===================== APPROVE LEAVE ===================== */
+
+  const approveLeave = async (leave: LeaveRequest) => {
+    setIsUpdating(leave.id);
+
+    try {
+      const monthStart = leave.start_date.slice(0, 7) + "-01";
+
+      // ✅ APPROVE LEAVE
+      await supabase
+        .from("leaves")
+        .update({ status: "approved" })
+        .eq("id", leave.id);
+
+      // 🔥 AUTO-DEBIT FOR 4TH LEAVE
+      if (leaveCounts[leave.id] >= 4 && leave.daily_wage) {
+        await supabase.from("money_ledger").insert({
+          emp_user_id: leave.emp_user_id,
+          amount: leave.daily_wage,
+          type: "debit",
+          reason: "Unpaid Leave (4th Leave)",
+          month_year: monthStart,
+        });
+      }
+
+      await notifyEmployee(
+        leave.emp_user_id,
+        "Leave Approved",
+        `Your leave from ${format(
+          new Date(leave.start_date),
+          "PPP"
+        )} to ${format(new Date(leave.end_date), "PPP")} has been approved.`
+      );
+
+      toast({ title: "Leave Approved" });
+      fetchLeaves();
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsUpdating(null);
+      setShowWarning(false);
+      setPendingLeave(null);
+    }
+  };
+
+  const handleApproveClick = async (leave: LeaveRequest) => {
+    const monthStart = leave.start_date.slice(0, 7) + "-01";
+    const approvedCount = await getApprovedLeavesThisMonth(
+      leave.emp_user_id,
+      monthStart
+    );
+
+    if (approvedCount >= 3) {
+      setPendingLeave(leave);
+      setShowWarning(true);
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const leaveDate = format(date, 'yyyy-MM-dd');
-      const { error } = await supabase
-        .from('leaves')
-        .insert({
-          emp_user_id: user!.id,
-          start_date: leaveDate,
-          end_date: leaveDate,
-          days: 1,
-          reason: reason.trim() || null,
-          status: 'pending',
-        });
-
-      if (error) throw error;
-
-      toast({ title: 'Success', description: 'Leave request submitted!' });
-      setDate(undefined);
-      setReason('');
-      fetchData();
-    } catch (error: any) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    } finally {
-      setIsSubmitting(false);
-    }
+    approveLeave(leave);
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'approved':
-        return <Badge className="bg-green-500"><CheckCircle className="h-3 w-3 mr-1" />Approved</Badge>;
-      case 'rejected':
-        return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Rejected</Badge>;
-      default:
-        return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" />Pending</Badge>;
-    }
+  /* ===================== REJECT ===================== */
+
+  const handleReject = async (leave: LeaveRequest) => {
+    setIsUpdating(leave.id);
+
+    await supabase
+      .from("leaves")
+      .update({ status: "rejected" })
+      .eq("id", leave.id);
+
+    await notifyEmployee(
+      leave.emp_user_id,
+      "Leave Rejected",
+      "Your leave request has been rejected by admin."
+    );
+
+    toast({ title: "Leave Rejected" });
+    fetchLeaves();
+    setIsUpdating(null);
   };
+
+  /* ===================== UI ===================== */
 
   return (
     <div className="min-h-screen bg-background">
-      <Header title="Leave Requests" backTo="/employee/dashboard" />
-      
-      <main className="p-4 max-w-2xl mx-auto space-y-4">
-        {/* Monthly Summary */}
-        <Card className={cn(
-          approvedThisMonth >= 3 ? "border-warning bg-warning/5" : "border-green-500/30 bg-green-500/5"
-        )}>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Approved leaves this month</p>
-                <p className="text-2xl font-bold">{approvedThisMonth} / 3</p>
-              </div>
-              {approvedThisMonth >= 3 && (
-                <AlertTriangle className="h-6 w-6 text-warning" />
-              )}
-            </div>
-          </CardContent>
-        </Card>
+      <Header title="Leave Management" backTo="/admin/dashboard" />
 
-        {/* Warning for extra leaves */}
-        {approvedThisMonth >= 3 && (
-          <Card className="border-warning/50 bg-warning/10">
-            <CardContent className="p-4 flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
-              <p className="text-sm">
-                From the 4th approved leave in a month, salary will be deducted automatically as unpaid leave.
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Apply Leave Form */}
+      <main className="p-4 max-w-4xl mx-auto space-y-4">
         <Card>
           <CardHeader>
-            <CardTitle>Apply for Leave</CardTitle>
-            <CardDescription>Select a date and provide a reason</CardDescription>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5" />
+              All Leave Requests
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="text-sm font-medium mb-2 block">Leave Date</label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full justify-start text-left font-normal",
-                      !date && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {date ? format(date, 'PPP') : 'Pick a date'}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={date}
-                    onSelect={setDate}
-                    disabled={(date) => date < new Date()}
-                    initialFocus
-                    className="pointer-events-auto"
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
 
-            <div>
-              <label className="text-sm font-medium mb-2 block">Reason (optional)</label>
-              <Textarea
-                placeholder="Enter reason for leave..."
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                rows={3}
-              />
-            </div>
-
-            <Button onClick={handleSubmit} disabled={isSubmitting} className="w-full">
-              {isSubmitting ? 'Submitting...' : 'Submit Leave Request'}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Leave History */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Leave History</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {leaves.length === 0 ? (
-                <p className="text-center text-muted-foreground py-4">No leave requests yet</p>
-              ) : (
-                leaves.map((leave) => (
-                  <div key={leave.id} className="p-3 bg-muted/50 rounded-lg">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-medium">
-                          {format(new Date(leave.start_date), 'PPP')}
-                          {leave.days > 1 && ` - ${format(new Date(leave.end_date), 'PPP')}`}
-                        </p>
-                        {leave.reason && (
-                          <p className="text-sm text-muted-foreground mt-1">{leave.reason}</p>
-                        )}
-                      </div>
-                      {getStatusBadge(leave.status)}
+          <CardContent className="space-y-3">
+            {leaves.map(leave => (
+              <div key={leave.id} className="p-4 bg-muted/50 rounded-lg">
+                <div className="flex justify-between gap-3">
+                  <div>
+                    <div className="flex gap-2 items-center flex-wrap">
+                      <User className="h-4 w-4" />
+                      <span className="font-medium">
+                        {leave.employee?.full_name ||
+                          leave.employee?.email}
+                      </span>
+                      <Badge>
+                        {leaveCounts[leave.id]} leave this month
+                      </Badge>
                     </div>
+
+                    <p className="text-sm mt-1">
+                      {format(new Date(leave.start_date), "PPP")} →{" "}
+                      {format(new Date(leave.end_date), "PPP")}
+                    </p>
                   </div>
-                ))
-              )}
-            </div>
+
+                  {leave.status === "pending" && (
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => handleApproveClick(leave)}
+                        disabled={isUpdating === leave.id}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => handleReject(leave)}
+                        disabled={isUpdating === leave.id}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </CardContent>
         </Card>
       </main>
+
+      {/* ⚠ WARNING DIALOG */}
+      <Dialog open={showWarning} onOpenChange={setShowWarning}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-destructive">
+              Salary Deduction Warning
+            </DialogTitle>
+            <DialogDescription>
+              This is the <strong>4th leave</strong>. Daily wage will be deducted.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="text-center font-bold text-red-600">
+            ₹{pendingLeave?.daily_wage}
+          </div>
+
+          <DialogFooter>
+            <Button onClick={() => setShowWarning(false)} variant="outline">
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => pendingLeave && approveLeave(pendingLeave)}
+            >
+              Confirm & Approve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
 
-export default EmployeeLeaves;
+export default AdminLeaves;

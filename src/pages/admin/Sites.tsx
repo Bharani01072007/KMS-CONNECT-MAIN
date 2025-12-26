@@ -54,15 +54,11 @@ const AdminSites = () => {
 
   /* ===================== FETCH ===================== */
 
-  useEffect(() => {
-    fetchSites();
-  }, []);
-
   const fetchSites = async () => {
     const { data, error } = await supabase
       .from('sites')
       .select('*')
-      .filter('is_active', 'eq', true) // ✅ SAFE FILTER (NO TS ERROR)
+      .filter('is_active', 'eq', true)
       .order('name');
 
     if (error) {
@@ -85,6 +81,27 @@ const AdminSites = () => {
       );
     }
   };
+
+  /* ===================== REALTIME ===================== */
+
+  useEffect(() => {
+    fetchSites();
+
+    const channel = supabase
+      .channel('admin-sites-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'sites' },
+        () => {
+          fetchSites();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   /* ===================== CREATE ===================== */
 
@@ -110,7 +127,6 @@ const AdminSites = () => {
       toast({ title: 'Success', description: 'Site created successfully' });
       setSiteName('');
       setAddress('');
-      fetchSites();
     } catch (e: any) {
       toast({
         title: 'Error',
@@ -139,7 +155,7 @@ const AdminSites = () => {
 
     const { error } = await supabase
       .from('sites')
-      .update({ is_active: false } as any) // ✅ TS SAFE OVERRIDE
+      .update({ is_active: false } as any)
       .eq('id', site.id);
 
     if (error) {
@@ -152,7 +168,6 @@ const AdminSites = () => {
     }
 
     toast({ title: 'Deleted', description: 'Site removed successfully' });
-    fetchSites();
   };
 
   /* ===================== QR ===================== */
@@ -271,10 +286,7 @@ const AdminSites = () => {
                     </div>
 
                     <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => openQRDialog(site)}
-                      >
+                      <Button size="sm" onClick={() => openQRDialog(site)}>
                         <QrCode className="h-4 w-4 mr-1" />
                         QR
                       </Button>
@@ -328,9 +340,7 @@ const AdminSites = () => {
                   size={200}
                   level="H"
                 />
-                <p className="mt-2 font-semibold">
-                  {selectedSite.name}
-                </p>
+                <p className="mt-2 font-semibold">{selectedSite.name}</p>
               </div>
 
               <Button onClick={downloadQR}>

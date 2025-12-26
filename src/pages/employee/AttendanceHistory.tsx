@@ -28,7 +28,7 @@ import {
 
 interface AttendanceRecord {
   day: string;
-  attendance_type: 'full' | 'half';
+  attendance_type: string; // 'full' | 'half'
 }
 
 interface LeaveRecord {
@@ -53,14 +53,11 @@ const AttendanceHistory = () => {
     absent: 0,
   });
 
-  useEffect(() => {
-    if (user) fetchData();
-  }, [user, currentMonth]);
-
   /* ===================== FETCH ===================== */
 
   const fetchData = async () => {
     if (!user) return;
+
     setIsLoading(true);
 
     const monthStart = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
@@ -79,27 +76,33 @@ const AttendanceHistory = () => {
       .eq('emp_user_id', user.id)
       .eq('status', 'approved');
 
-    setAttendance(attData || []);
-    setLeaves(leaveData || []);
+    const attendanceRows = attData || [];
+    const leaveRows = leaveData || [];
 
-    /* ===== SUMMARY CALCULATION ===== */
+    setAttendance(attendanceRows);
+    setLeaves(leaveRows);
 
-    const fullDays =
-      attData?.filter((a) => a.attendance_type === 'full').length || 0;
+    /* ===================== SUMMARY ===================== */
 
-    const halfDays =
-      attData?.filter((a) => a.attendance_type === 'half').length || 0;
+    const fullDays = attendanceRows.filter(a => a.attendance_type === 'full').length;
+    const halfDays = attendanceRows.filter(a => a.attendance_type === 'half').length;
 
-    const leaveDays = leaveData?.length || 0;
+    const leaveDays = leaveRows.reduce((sum, l) => {
+      const days = eachDayOfInterval({
+        start: new Date(l.start_date),
+        end: new Date(l.end_date),
+      });
+      return sum + days.length;
+    }, 0);
 
     const today = new Date();
-    const daysInMonth = eachDayOfInterval({
+    const validDays = eachDayOfInterval({
       start: startOfMonth(currentMonth),
       end: today < endOfMonth(currentMonth) ? today : endOfMonth(currentMonth),
     });
 
     const absent =
-      daysInMonth.length - fullDays - halfDays - leaveDays;
+      validDays.length - fullDays - halfDays - leaveDays;
 
     setSummary({
       present: fullDays,
@@ -108,15 +111,103 @@ const AttendanceHistory = () => {
       absent: Math.max(0, absent),
     });
 
+    await autoSalaryAdjustments(validDays, attendanceRows, leaveRows);
+
     setIsLoading(false);
   };
+
+  /* ===================== AUTO SALARY LOGIC ===================== */
+
+  const autoSalaryAdjustments = async (
+    days: Date[],
+    att: AttendanceRecord[],
+    leaves: LeaveRecord[]
+  ) => {
+    if (!user) return;
+
+    const { data: emp } = await supabase
+      .from('employees')
+      .select('daily_wage')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!emp?.daily_wage) return;
+
+    for (const day of days) {
+      const dateStr = format(day, 'yyyy-MM-dd');
+
+      const isLeave = leaves.some(
+        l => dateStr >= l.start_date && dateStr <= l.end_date
+      );
+      if (isLeave) continue;
+
+      const record = att.find(a => a.day === dateStr);
+
+      let debitAmount = 0;
+      let reason = '';
+
+      if (!record) {
+        debitAmount = emp.daily_wage;
+        reason = `Absence debit for ${dateStr}`;
+      } else if (record.attendance_type === 'half') {
+        debitAmount = emp.daily_wage / 2;
+        reason = `Half-day debit for ${dateStr}`;
+      } else {
+        continue;
+      }
+
+      const monthYear = format(day, 'yyyy-MM-01');
+
+      const { data: exists } = await supabase
+        .from('money_ledger')
+        .select('id')
+        .eq('emp_user_id', user.id)
+        .eq('month_year', monthYear)
+        .eq('reason', reason)
+        .maybeSingle();
+
+      if (exists) continue;
+
+      await supabase.from('money_ledger').insert({
+        emp_user_id: user.id,
+        amount: debitAmount,
+        type: 'debit',
+        reason,
+        month_year: monthYear,
+      });
+    }
+  };
+
+  /* ===================== REALTIME ===================== */
+
+  useEffect(() => {
+    if (!user) return;
+
+    fetchData();
+
+    const channel = supabase
+      .channel(`attendance-history-${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance' },
+        () => fetchData()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leaves' },
+        () => fetchData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, currentMonth]);
 
   /* ===================== HELPERS ===================== */
 
   const isDateInLeave = (dateStr: string) =>
-    leaves.some(
-      (l) => dateStr >= l.start_date && dateStr <= l.end_date
-    );
+    leaves.some(l => dateStr >= l.start_date && dateStr <= l.end_date);
 
   const getDayStatus = (date: Date): string => {
     const dateStr = format(date, 'yyyy-MM-dd');
@@ -126,8 +217,7 @@ const AttendanceHistory = () => {
     if (date > today) return 'future';
     if (isDateInLeave(dateStr)) return 'leave';
 
-    const att = attendance.find((a) => a.day === dateStr);
-
+    const att = attendance.find(a => a.day === dateStr);
     if (att?.attendance_type === 'full') return 'present';
     if (att?.attendance_type === 'half') return 'half';
 
@@ -177,107 +267,58 @@ const AttendanceHistory = () => {
       <main className="p-4 max-w-lg mx-auto space-y-4">
         {/* MONTH NAV */}
         <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </Button>
-
-              <h2 className="text-lg font-semibold">
-                {format(currentMonth, 'MMMM yyyy')}
-              </h2>
-
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
-                disabled={isSameMonth(currentMonth, new Date())}
-              >
-                <ChevronRight className="h-5 w-5" />
-              </Button>
-            </div>
+          <CardContent className="p-4 flex items-center justify-between">
+            <Button variant="ghost" size="icon" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>
+              <ChevronLeft />
+            </Button>
+            <h2 className="text-lg font-semibold">{format(currentMonth, 'MMMM yyyy')}</h2>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+              disabled={isSameMonth(currentMonth, new Date())}
+            >
+              <ChevronRight />
+            </Button>
           </CardContent>
         </Card>
 
         {/* SUMMARY */}
         <div className="grid grid-cols-4 gap-2">
-          <Card>
-            <CardContent className="p-3 text-center">
-              <CheckCircle className="h-5 w-5 mx-auto text-green-500 mb-1" />
-              <p className="text-lg font-bold">{summary.present}</p>
-              <p className="text-xs text-muted-foreground">Present</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-3 text-center">
-              <Clock className="h-5 w-5 mx-auto text-yellow-500 mb-1" />
-              <p className="text-lg font-bold">{summary.halfDays}</p>
-              <p className="text-xs text-muted-foreground">Half Day</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-3 text-center">
-              <Plane className="h-5 w-5 mx-auto text-blue-500 mb-1" />
-              <p className="text-lg font-bold">{summary.leaves}</p>
-              <p className="text-xs text-muted-foreground">Leaves</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-3 text-center">
-              <XCircle className="h-5 w-5 mx-auto text-red-400 mb-1" />
-              <p className="text-lg font-bold">{summary.absent}</p>
-              <p className="text-xs text-muted-foreground">Absent</p>
-            </CardContent>
-          </Card>
+          <Summary icon={<CheckCircle className="text-green-500" />} label="Present" value={summary.present} />
+          <Summary icon={<Clock className="text-yellow-500" />} label="Half Day" value={summary.halfDays} />
+          <Summary icon={<Plane className="text-blue-500" />} label="Leaves" value={summary.leaves} />
+          <Summary icon={<XCircle className="text-red-400" />} label="Absent" value={summary.absent} />
         </div>
 
         {/* CALENDAR */}
         <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
               <Calendar className="h-4 w-4" /> Calendar View
             </CardTitle>
           </CardHeader>
 
           <CardContent className="p-4">
             <div className="grid grid-cols-7 gap-1 mb-2">
-              {weekDays.map((day) => (
-                <div
-                  key={day}
-                  className="text-center text-xs font-medium text-muted-foreground py-1"
-                >
-                  {day}
+              {weekDays.map(d => (
+                <div key={d} className="text-center text-xs font-medium text-muted-foreground">
+                  {d}
                 </div>
               ))}
             </div>
 
             <div className="grid grid-cols-7 gap-1">
               {Array.from({ length: firstDayOffset }).map((_, i) => (
-                <div key={i} className="aspect-square" />
+                <div key={i} />
               ))}
 
-              {daysInMonth.map((date) => {
+              {daysInMonth.map(date => {
                 const status = getDayStatus(date);
                 return (
-                  <div
-                    key={date.toISOString()}
-                    className="aspect-square flex flex-col items-center justify-center rounded-md"
-                  >
-                    <span className="text-xs text-muted-foreground mb-0.5">
-                      {format(date, 'd')}
-                    </span>
-                    <div
-                      className={`w-3 h-3 rounded-full ${getStatusColor(
-                        status
-                      )}`}
-                    />
+                  <div key={date.toISOString()} className="aspect-square flex flex-col items-center justify-center">
+                    <span className="text-xs text-muted-foreground">{format(date, 'd')}</span>
+                    <div className={`w-3 h-3 rounded-full ${getStatusColor(status)}`} />
                   </div>
                 );
               })}
@@ -288,5 +329,17 @@ const AttendanceHistory = () => {
     </div>
   );
 };
+
+/* ===================== SUMMARY ===================== */
+
+const Summary = ({ icon, label, value }: any) => (
+  <Card>
+    <CardContent className="p-3 text-center">
+      {icon}
+      <p className="text-lg font-bold">{value}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
+    </CardContent>
+  </Card>
+);
 
 export default AttendanceHistory;

@@ -25,6 +25,8 @@ import {
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 
+/* ===================== TYPES ===================== */
+
 interface DashboardStats {
   totalEmployees: number;
   totalSites: number;
@@ -38,8 +40,11 @@ interface LatestAnnouncement {
   created_at: string | null;
 }
 
+/* ===================== COMPONENT ===================== */
+
 const AdminDashboard = () => {
   const { user } = useAuth();
+
   const [stats, setStats] = useState<DashboardStats>({
     totalEmployees: 0,
     totalSites: 0,
@@ -47,14 +52,13 @@ const AdminDashboard = () => {
     openComplaints: 0,
     todayAttendance: 0,
   });
+
   const [announcement, setAnnouncement] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [latestAnnouncement, setLatestAnnouncement] = useState<LatestAnnouncement | null>(null);
+  const [latestAnnouncement, setLatestAnnouncement] =
+    useState<LatestAnnouncement | null>(null);
 
-  useEffect(() => {
-    fetchStats();
-    fetchLatestAnnouncement();
-  }, []);
+  /* ===================== FETCH ===================== */
 
   const fetchStats = async () => {
     const { count: employeeCount } = await supabase
@@ -103,6 +107,33 @@ const AdminDashboard = () => {
     if (data) setLatestAnnouncement(data);
   };
 
+  const refreshAll = () => {
+    fetchStats();
+    fetchLatestAnnouncement();
+  };
+
+  /* ===================== REALTIME ===================== */
+
+  useEffect(() => {
+    refreshAll();
+
+    const channel = supabase
+      .channel('admin-dashboard-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_directory' }, refreshAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sites' }, refreshAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, refreshAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leaves' }, refreshAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, refreshAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, refreshAll)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  /* ===================== ANNOUNCEMENT ===================== */
+
   const handleSendAnnouncement = async () => {
     if (!announcement.trim()) {
       toast({
@@ -121,20 +152,17 @@ const AdminDashboard = () => {
         .eq('role', 'employee');
 
       if (employees?.length) {
-        const notifications = employees
-          .filter(e => e.user_id)
-          .map(e => ({
+        await supabase.from('notifications').insert(
+          employees.map(e => ({
             title: 'Announcement',
             body: announcement.trim(),
             user_id: e.user_id!,
-          }));
-
-        await supabase.from('notifications').insert(notifications);
+          }))
+        );
       }
 
       toast({ title: 'Success', description: 'Announcement sent' });
       setAnnouncement('');
-      fetchLatestAnnouncement();
     } catch {
       toast({
         title: 'Error',
@@ -145,6 +173,8 @@ const AdminDashboard = () => {
       setIsSending(false);
     }
   };
+
+  /* ===================== UI ===================== */
 
   const statCards = [
     { icon: Users, label: 'Employees', value: stats.totalEmployees, color: 'text-blue-500', bg: 'bg-blue-500/10' },
@@ -159,10 +189,7 @@ const AdminDashboard = () => {
     { icon: MessageSquare, label: 'Chat Inbox', description: 'Message employees', href: '/admin/chat', color: 'text-primary' },
     { icon: Calendar, label: 'Leave Approvals', description: `${stats.pendingLeaves} pending requests`, href: '/admin/leaves', color: 'text-amber-500' },
     { icon: CalendarDays, label: 'Company Holidays', description: 'Assign company-wide holidays', href: '/admin/holidays', color: 'text-violet-500' },
-
-    /* ✅ NEW – Advance Requests */
     { icon: IndianRupee, label: 'Advance Requests', description: 'Approve employee advance salary', href: '/admin/advance-requests', color: 'text-emerald-500' },
-
     { icon: Wallet, label: 'Money Ledger', description: 'Manage payments & advances', href: '/admin/ledger', color: 'text-teal-500' },
     { icon: Bell, label: 'Notifications', description: 'View announcements history', href: '/admin/notifications', color: 'text-indigo-500' },
     { icon: AlertCircle, label: 'Complaints', description: `${stats.openComplaints} open complaints`, href: '/admin/complaints', color: 'text-destructive' },
@@ -198,7 +225,11 @@ const AdminDashboard = () => {
             <CardDescription>Broadcast a message to all employees</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Textarea value={announcement} onChange={e => setAnnouncement(e.target.value)} placeholder="Type your announcement here..." />
+            <Textarea
+              value={announcement}
+              onChange={e => setAnnouncement(e.target.value)}
+              placeholder="Type your announcement here..."
+            />
             <Button onClick={handleSendAnnouncement} disabled={isSending}>
               <Send className="h-4 w-4 mr-2" />
               {isSending ? 'Sending...' : 'Send'}
@@ -209,7 +240,8 @@ const AdminDashboard = () => {
                 <p className="text-xs text-muted-foreground">Latest Announcement</p>
                 <p className="text-sm">{latestAnnouncement.body}</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {latestAnnouncement.created_at && format(new Date(latestAnnouncement.created_at), 'PPp')}
+                  {latestAnnouncement.created_at &&
+                    format(new Date(latestAnnouncement.created_at), 'PPp')}
                 </p>
               </div>
             )}
@@ -217,7 +249,9 @@ const AdminDashboard = () => {
         </Card>
 
         <div>
-          <h2 className="text-sm font-medium text-muted-foreground px-1 mb-2">Management</h2>
+          <h2 className="text-sm font-medium text-muted-foreground px-1 mb-2">
+            Management
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {menuItems.map(item => (
               <Link key={item.label} to={item.href}>
@@ -228,7 +262,9 @@ const AdminDashboard = () => {
                     </div>
                     <div className="flex-1">
                       <p className="font-medium">{item.label}</p>
-                      <p className="text-xs text-muted-foreground">{item.description}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {item.description}
+                      </p>
                     </div>
                     <ChevronRight className="h-5 w-5 text-muted-foreground" />
                   </CardContent>

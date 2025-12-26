@@ -23,23 +23,49 @@ const AdminNotifications = () => {
 
   useEffect(() => {
     fetchNotifications();
+
+    /* ===================== REALTIME ===================== */
+    const channel = supabase
+      .channel("admin-announcements")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "notifications",
+          filter: "title=eq.Announcement",
+        },
+        (payload) => {
+          const newItem = payload.new as Notification;
+
+          setNotifications((prev) => {
+            // ✅ prevent duplicate bodies
+            if (prev.some((n) => n.body === newItem.body)) return prev;
+            return [newItem, ...prev];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  /* ===================== FETCH (DEDUPED ANNOUNCEMENTS) ===================== */
+  /* ===================== FETCH ===================== */
 
   const fetchNotifications = async () => {
     setLoading(true);
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("notifications")
       .select("id, title, body, read, created_at")
       .eq("title", "Announcement")
       .order("created_at", { ascending: false });
 
-    if (!error && data) {
-      // ✅ DEDUPLICATE SAME BODY
+    if (data) {
       const unique = Array.from(
-        new Map(data.map(n => [n.body, n])).values()
+        new Map(data.map((n) => [n.body, n])).values()
       );
       setNotifications(unique);
     }
@@ -74,7 +100,7 @@ const AdminNotifications = () => {
             )}
 
             {!loading &&
-              notifications.map(n => (
+              notifications.map((n) => (
                 <div
                   key={n.id}
                   className="p-3 rounded-lg border flex gap-3 bg-muted"

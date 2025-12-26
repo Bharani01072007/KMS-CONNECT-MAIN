@@ -23,10 +23,11 @@ const EmployeeChat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [adminId, setAdminId] = useState<string | null>(null);
-  const [threadId, setThreadId] = useState<string>("");
+  const [threadId, setThreadId] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
+  const channelRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -38,37 +39,26 @@ const EmployeeChat = () => {
       .limit(1)
       .maybeSingle();
 
-    if (data?.auth_uid) return data.auth_uid;
-    return null;
+    return data?.auth_uid ?? null;
   }, []);
 
   useEffect(() => {
     if (!user) return;
 
+    let isMounted = true;
+
     const init = async () => {
       setIsLoading(true);
 
       const adminUid = await fetchAdmin();
-      if (!adminUid) {
-        toast({ title: "No admin found", variant: "destructive" });
-        setIsLoading(false);
-        return;
-      }
-
-      setAdminId(adminUid);
+      if (!adminUid || !isMounted) return;
 
       const tId = getThreadId(user.id, adminUid);
+      setAdminId(adminUid);
       setThreadId(tId);
 
-      const { data } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("thread_id", tId)
-        .order("created_at", { ascending: true });
-
-      setMessages(data || []);
-
-      const channel = supabase
+      /* ✅ REALTIME FIRST */
+      channelRef.current = supabase
         .channel(`chat-${tId}`)
         .on(
           "postgres_changes",
@@ -80,20 +70,35 @@ const EmployeeChat = () => {
           },
           (payload) => {
             const msg = payload.new as Message;
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === msg.id)) return prev;
-              return [...prev, msg];
-            });
+            setMessages((prev) =>
+              prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
+            );
           }
         )
         .subscribe();
 
-      setIsLoading(false);
+      /* ✅ FETCH HISTORY */
+      const { data } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("thread_id", tId)
+        .order("created_at", { ascending: true });
 
-      return () => supabase.removeChannel(channel);
+      if (isMounted) {
+        setMessages(data || []);
+        setIsLoading(false);
+      }
     };
 
     init();
+
+    return () => {
+      isMounted = false;
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
   }, [user, fetchAdmin]);
 
   useEffect(() => {
@@ -106,11 +111,11 @@ const EmployeeChat = () => {
     const content = newMessage.trim();
     setIsSending(true);
 
-    const optimisticId = `temp-${Date.now()}`;
+    const tempId = `temp-${Date.now()}`;
     setMessages((prev) => [
       ...prev,
       {
-        id: optimisticId,
+        id: tempId,
         content,
         sender_id: user.id,
         recipient_id: adminId,
@@ -128,18 +133,17 @@ const EmployeeChat = () => {
         sender_id: user.id,
         recipient_id: adminId,
         content,
-        metadata: {},
       })
       .select()
       .single();
 
     if (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setNewMessage(content);
-    } else if (data) {
+    } else {
       setMessages((prev) =>
-        prev.map((m) => (m.id === optimisticId ? { ...data, pending: false } : m))
+        prev.map((m) => (m.id === tempId ? { ...data, pending: false } : m))
       );
     }
 

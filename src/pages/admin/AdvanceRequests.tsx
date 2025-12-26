@@ -41,7 +41,30 @@ const AdminAdvanceRequests = () => {
 
   useEffect(() => {
     fetchRequests();
+
+    /* ===================== 🔴 REALTIME ===================== */
+
+    const channel = supabase
+      .channel("admin-advance-requests")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "advance_requests",
+        },
+        () => {
+          fetchRequests();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
+
+  /* ===================== FETCH ===================== */
 
   const fetchRequests = async () => {
     const { data } = await supabase
@@ -72,6 +95,8 @@ const AdminAdvanceRequests = () => {
     setRequests(enriched);
   };
 
+  /* ===================== APPROVE ===================== */
+
   const approveRequest = async (req: AdvanceRequest) => {
     setIsUpdating(req.id);
 
@@ -99,7 +124,6 @@ const AdminAdvanceRequests = () => {
       });
 
       toast({ title: "Advance Approved & Debited" });
-      fetchRequests();
     } catch (e: any) {
       toast({
         title: "Error",
@@ -110,6 +134,8 @@ const AdminAdvanceRequests = () => {
       setIsUpdating(null);
     }
   };
+
+  /* ===================== REJECT ===================== */
 
   const rejectRequest = async (req: AdvanceRequest) => {
     setIsUpdating(req.id);
@@ -130,7 +156,6 @@ const AdminAdvanceRequests = () => {
       });
 
       toast({ title: "Advance Rejected" });
-      fetchRequests();
     } catch (e: any) {
       toast({
         title: "Error",
@@ -141,6 +166,8 @@ const AdminAdvanceRequests = () => {
       setIsUpdating(null);
     }
   };
+
+  /* ===================== STATUS BADGE ===================== */
 
   const getBadge = (status: AdvanceStatus) => {
     switch (status) {
@@ -167,6 +194,8 @@ const AdminAdvanceRequests = () => {
         );
     }
   };
+
+  /* ===================== UI ===================== */
 
   return (
     <div className="min-h-screen bg-background">

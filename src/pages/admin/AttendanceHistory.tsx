@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import Header from '@/components/Header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,12 +22,12 @@ import {
   addMonths,
   subMonths,
 } from 'date-fns';
+import { useParams } from 'react-router-dom';
 
 /* ===================== TYPES ===================== */
 
 interface AttendanceRecord {
   day: string;
-  attendance_type: 'full' | 'half' | null;
   checkin_at: string | null;
   checkout_at: string | null;
 }
@@ -36,93 +35,86 @@ interface AttendanceRecord {
 interface LeaveRecord {
   start_date: string;
   end_date: string;
-  status: string | null;
 }
 
 /* ===================== COMPONENT ===================== */
 
 const AttendanceHistory = () => {
-  const { user } = useAuth();
-
+  const { employeeId } = useParams(); // ✅ ADMIN VIEW
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [summary, setSummary] = useState({
     present: 0,
-    halfDays: 0,
-    leaves: 0,
+    half: 0,
+    leave: 0,
     absent: 0,
   });
 
   /* ===================== FETCH ===================== */
 
   const fetchData = async () => {
-    if (!user) return;
+    if (!employeeId) return;
 
     setIsLoading(true);
 
-    const monthStart = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
-    const monthEnd = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
+    const start = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
+    const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
 
-    const { data: attData } = await supabase
+    const { data: att } = await supabase
       .from('attendance')
-      .select('day, attendance_type, checkin_at, checkout_at')
-      .eq('emp_user_id', user.id)
-      .gte('day', monthStart)
-      .lte('day', monthEnd);
+      .select('day, checkin_at, checkout_at')
+      .eq('emp_user_id', employeeId)
+      .gte('day', start)
+      .lte('day', end);
 
     const { data: leaveData } = await supabase
       .from('leaves')
-      .select('start_date, end_date, status')
-      .eq('emp_user_id', user.id)
+      .select('start_date, end_date')
+      .eq('emp_user_id', employeeId)
       .eq('status', 'approved');
 
-    /* ✅ TYPE-SAFE MAPPING (FIXES ERROR) */
-    const attendanceRows: AttendanceRecord[] =
-      (attData || []).map(a => ({
-        day: a.day,
-        attendance_type:
-          a.attendance_type === 'full' || a.attendance_type === 'half'
-            ? a.attendance_type
-            : null,
-        checkin_at: a.checkin_at,
-        checkout_at: a.checkout_at,
-      }));
-
+    const attendanceRows = att || [];
     const leaveRows = leaveData || [];
 
     setAttendance(attendanceRows);
     setLeaves(leaveRows);
 
-    /* ===================== SUMMARY ===================== */
+    /* ===================== SUMMARY (FIXED) ===================== */
 
-    const fullDays = attendanceRows.filter(a => a.attendance_type === 'full').length;
-    const halfDays = attendanceRows.filter(a => a.attendance_type === 'half').length;
+    let present = 0;
+    let half = 0;
+
+    attendanceRows.forEach(a => {
+      if (a.checkout_at) present++;
+      else if (a.checkin_at) half++;
+    });
 
     const leaveDays = leaveRows.reduce((sum, l) => {
-      const days = eachDayOfInterval({
-        start: new Date(l.start_date),
-        end: new Date(l.end_date),
-      });
-      return sum + days.length;
+      return (
+        sum +
+        eachDayOfInterval({
+          start: new Date(l.start_date),
+          end: new Date(l.end_date),
+        }).length
+      );
     }, 0);
 
-    const today = new Date();
     const validDays = eachDayOfInterval({
       start: startOfMonth(currentMonth),
-      end: today < endOfMonth(currentMonth) ? today : endOfMonth(currentMonth),
+      end: endOfMonth(currentMonth),
     });
 
     const absent =
-      validDays.length - fullDays - halfDays - leaveDays;
+      validDays.length - present - half - leaveDays;
 
     setSummary({
-      present: fullDays,
-      halfDays,
-      leaves: leaveDays,
+      present,
+      half,
+      leave: leaveDays,
       absent: Math.max(0, absent),
     });
 
@@ -132,12 +124,10 @@ const AttendanceHistory = () => {
   /* ===================== REALTIME ===================== */
 
   useEffect(() => {
-    if (!user) return;
-
     fetchData();
 
     const channel = supabase
-      .channel(`attendance-history-${user.id}`)
+      .channel(`admin-attendance-${employeeId}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'attendance' },
@@ -153,77 +143,64 @@ const AttendanceHistory = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, currentMonth]);
+  }, [employeeId, currentMonth]);
 
   /* ===================== HELPERS ===================== */
 
-  const isDateInLeave = (dateStr: string) =>
-    leaves.some(l => dateStr >= l.start_date && dateStr <= l.end_date);
+  const isLeave = (date: string) =>
+    leaves.some(l => date >= l.start_date && date <= l.end_date);
 
-  const getDayStatus = (date: Date): string => {
-    const dateStr = format(date, 'yyyy-MM-dd');
-    if (isDateInLeave(dateStr)) return 'leave';
+  const getStatus = (date: Date) => {
+    const d = format(date, 'yyyy-MM-dd');
+    if (isLeave(d)) return 'leave';
 
-    const att = attendance.find(a => a.day === dateStr);
-    if (att?.attendance_type === 'full') return 'present';
-    if (att?.attendance_type === 'half') return 'half';
-
+    const a = attendance.find(x => x.day === d);
+    if (a?.checkout_at) return 'present';
+    if (a?.checkin_at) return 'half';
     return 'absent';
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'present':
-        return 'bg-green-500';
-      case 'half':
-        return 'bg-yellow-500';
-      case 'leave':
-        return 'bg-blue-500';
-      case 'absent':
-        return 'bg-red-400';
-      default:
-        return 'bg-gray-200 dark:bg-gray-700';
-    }
-  };
+  const color = (s: string) =>
+    s === 'present'
+      ? 'bg-green-500'
+      : s === 'half'
+      ? 'bg-yellow-500'
+      : s === 'leave'
+      ? 'bg-blue-500'
+      : 'bg-red-400';
 
   const selectedAttendance = attendance.find(a => a.day === selectedDate);
-
-  const daysInMonth = eachDayOfInterval({
-    start: startOfMonth(currentMonth),
-    end: endOfMonth(currentMonth),
-  });
-
-  const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const firstDayOffset = startOfMonth(currentMonth).getDay();
 
   /* ===================== UI ===================== */
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex flex-col">
-        <Header title="Attendance History" backTo="/employee/dashboard" />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
 
+  const days = eachDayOfInterval({
+    start: startOfMonth(currentMonth),
+    end: endOfMonth(currentMonth),
+  });
+
   return (
     <div className="min-h-screen bg-background">
-      <Header title="Attendance History" backTo="/employee/dashboard" />
+      <Header title="Attendance History" backTo="/admin/employees" />
 
       <main className="p-4 max-w-lg mx-auto space-y-4">
-        {/* MONTH NAV */}
+        {/* MONTH */}
         <Card>
-          <CardContent className="p-4 flex items-center justify-between">
-            <Button variant="ghost" size="icon" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>
+          <CardContent className="flex justify-between items-center p-4">
+            <Button size="icon" variant="ghost" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>
               <ChevronLeft />
             </Button>
-            <h2 className="text-lg font-semibold">{format(currentMonth, 'MMMM yyyy')}</h2>
+            <h2 className="font-semibold">{format(currentMonth, 'MMMM yyyy')}</h2>
             <Button
-              variant="ghost"
               size="icon"
+              variant="ghost"
               onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
               disabled={isSameMonth(currentMonth, new Date())}
             >
@@ -234,77 +211,44 @@ const AttendanceHistory = () => {
 
         {/* SUMMARY */}
         <div className="grid grid-cols-4 gap-2">
-          <Summary icon={<CheckCircle className="text-green-500" />} label="Present" value={summary.present} />
-          <Summary icon={<Clock className="text-yellow-500" />} label="Half Day" value={summary.halfDays} />
-          <Summary icon={<Plane className="text-blue-500" />} label="Leaves" value={summary.leaves} />
-          <Summary icon={<XCircle className="text-red-400" />} label="Absent" value={summary.absent} />
+          <Summary icon={<CheckCircle />} label="Present" value={summary.present} />
+          <Summary icon={<Clock />} label="Half" value={summary.half} />
+          <Summary icon={<Plane />} label="Leave" value={summary.leave} />
+          <Summary icon={<XCircle />} label="Absent" value={summary.absent} />
         </div>
 
         {/* CALENDAR */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="h-4 w-4" /> Calendar View
+            <CardTitle>
+              <Calendar className="inline h-4 w-4 mr-2" />
+              Calendar
             </CardTitle>
           </CardHeader>
-
-          <CardContent className="p-4">
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {weekDays.map(d => (
-                <div key={d} className="text-center text-xs font-medium text-muted-foreground">
-                  {d}
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: firstDayOffset }).map((_, i) => (
-                <div key={i} />
-              ))}
-
-              {daysInMonth.map(date => {
-                const dateStr = format(date, 'yyyy-MM-dd');
-                const status = getDayStatus(date);
-                return (
-                  <button
-                    key={date.toISOString()}
-                    onClick={() => setSelectedDate(dateStr)}
-                    className="aspect-square flex flex-col items-center justify-center rounded hover:bg-muted"
-                  >
-                    <span className="text-xs text-muted-foreground">{format(date, 'd')}</span>
-                    <div className={`w-3 h-3 rounded-full ${getStatusColor(status)}`} />
-                  </button>
-                );
-              })}
-            </div>
+          <CardContent className="grid grid-cols-7 gap-1">
+            {days.map(d => (
+              <button
+                key={d.toISOString()}
+                onClick={() => setSelectedDate(format(d, 'yyyy-MM-dd'))}
+                className="aspect-square flex flex-col items-center justify-center rounded hover:bg-muted"
+              >
+                <span className="text-xs">{format(d, 'd')}</span>
+                <div className={`w-3 h-3 rounded-full ${color(getStatus(d))}`} />
+              </button>
+            ))}
           </CardContent>
         </Card>
 
-        {/* SELECTED DAY DETAILS */}
+        {/* DAY DETAILS */}
         {selectedDate && (
           <Card>
             <CardHeader>
               <CardTitle>{format(new Date(selectedDate), 'PPP')}</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <p>
-                <strong>Check In:</strong>{' '}
-                {selectedAttendance?.checkin_at
-                  ? format(new Date(selectedAttendance.checkin_at), 'hh:mm a')
-                  : '-'}
-              </p>
-              <p>
-                <strong>Check Out:</strong>{' '}
-                {selectedAttendance?.checkout_at
-                  ? format(new Date(selectedAttendance.checkout_at), 'hh:mm a')
-                  : '-'}
-              </p>
-              <p>
-                <strong>Status:</strong>{' '}
-                {selectedAttendance?.attendance_type
-                  ? selectedAttendance.attendance_type.toUpperCase()
-                  : 'ABSENT'}
-              </p>
+            <CardContent className="text-sm space-y-1">
+              <p><b>Check In:</b> {selectedAttendance?.checkin_at ? format(new Date(selectedAttendance.checkin_at), 'hh:mm a') : '-'}</p>
+              <p><b>Check Out:</b> {selectedAttendance?.checkout_at ? format(new Date(selectedAttendance.checkout_at), 'hh:mm a') : '-'}</p>
+              <p><b>Status:</b> {getStatus(new Date(selectedDate)).toUpperCase()}</p>
             </CardContent>
           </Card>
         )}
@@ -313,14 +257,14 @@ const AttendanceHistory = () => {
   );
 };
 
-/* ===================== SUMMARY ===================== */
+/* ===================== SUMMARY CARD ===================== */
 
 const Summary = ({ icon, label, value }: any) => (
   <Card>
     <CardContent className="p-3 text-center">
       {icon}
-      <p className="text-lg font-bold">{value}</p>
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="font-bold">{value}</p>
+      <p className="text-xs">{label}</p>
     </CardContent>
   </Card>
 );

@@ -58,7 +58,7 @@ const AdminSites = () => {
     const { data, error } = await supabase
       .from('sites')
       .select('*')
-      .filter('is_active', 'eq', true)
+      .eq('is_active', true)
       .order('name');
 
     if (error) {
@@ -70,33 +70,29 @@ const AdminSites = () => {
       return;
     }
 
-    if (data) {
-      setSites(
-        data.map((s) => ({
-          id: s.id,
-          name: s.name,
-          address: s.address,
-          created_at: s.created_at,
-        }))
-      );
-    }
+    setSites(data || []);
   };
 
-  /* ===================== REALTIME ===================== */
+  /* ===================== REALTIME (FIXED) ===================== */
 
   useEffect(() => {
     fetchSites();
 
-    const channel = supabase
-      .channel('admin-sites-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'sites' },
-        () => {
-          fetchSites();
-        }
-      )
-      .subscribe();
+    const channel = supabase.channel('admin-sites-realtime');
+
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'sites',
+      },
+      () => {
+        fetchSites();
+      }
+    );
+
+    channel.subscribe();
 
     return () => {
       supabase.removeChannel(channel);
@@ -120,6 +116,7 @@ const AdminSites = () => {
       const { error } = await supabase.from('sites').insert({
         name: siteName.trim(),
         address: address.trim() || null,
+        is_active: true,
       });
 
       if (error) throw error;
@@ -138,13 +135,6 @@ const AdminSites = () => {
     }
   };
 
-  /* ===================== COPY ===================== */
-
-  const copyToClipboard = async (text: string) => {
-    await navigator.clipboard.writeText(text);
-    toast({ title: 'Copied!', description: 'Site ID copied to clipboard' });
-  };
-
   /* ===================== DELETE (SOFT) ===================== */
 
   const handleDeleteSite = async (site: Site) => {
@@ -155,7 +145,7 @@ const AdminSites = () => {
 
     const { error } = await supabase
       .from('sites')
-      .update({ is_active: false } as any)
+      .update({ is_active: false })
       .eq('id', site.id);
 
     if (error) {
@@ -294,7 +284,7 @@ const AdminSites = () => {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => copyToClipboard(site.id)}
+                        onClick={() => navigator.clipboard.writeText(site.id)}
                       >
                         <Copy className="h-4 w-4" />
                       </Button>
@@ -335,11 +325,7 @@ const AdminSites = () => {
                 ref={qrRef}
                 className="flex flex-col items-center p-4 bg-white rounded"
               >
-                <QRCodeSVG
-                  value={getQRPayload(selectedSite.id)}
-                  size={200}
-                  level="H"
-                />
+                <QRCodeSVG value={getQRPayload(selectedSite.id)} size={200} />
                 <p className="mt-2 font-semibold">{selectedSite.name}</p>
               </div>
 

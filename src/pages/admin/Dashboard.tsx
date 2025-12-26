@@ -2,15 +2,21 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import Header from '@/components/Header';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
-import { 
-  Users, 
-  MapPin, 
-  Calendar, 
-  AlertCircle, 
+import {
+  Users,
+  MapPin,
+  Calendar,
+  AlertCircle,
   Bell,
   MessageSquare,
   Wallet,
@@ -20,7 +26,7 @@ import {
   Clock,
   Megaphone,
   CalendarDays,
-  IndianRupee
+  IndianRupee,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
@@ -68,7 +74,8 @@ const AdminDashboard = () => {
 
     const { count: siteCount } = await supabase
       .from('sites')
-      .select('*', { count: 'exact', head: true });
+      .select('*', { count: 'exact', head: true })
+      .eq('is_active', true); // ✅ FIX: respect soft delete
 
     const { count: pendingLeavesCount } = await supabase
       .from('leaves')
@@ -112,19 +119,44 @@ const AdminDashboard = () => {
     fetchLatestAnnouncement();
   };
 
-  /* ===================== REALTIME ===================== */
+  /* ===================== REALTIME (SUPABASE v2 SAFE) ===================== */
 
   useEffect(() => {
     refreshAll();
 
     const channel = supabase
       .channel('admin-dashboard-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_directory' }, refreshAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sites' }, refreshAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, refreshAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leaves' }, refreshAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, refreshAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, refreshAll)
+
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'employee_directory' },
+        refreshAll
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'sites' },
+        refreshAll
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance' },
+        refreshAll
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leaves' },
+        refreshAll
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'complaints' },
+        refreshAll
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications' },
+        refreshAll
+      )
       .subscribe();
 
     return () => {
@@ -184,15 +216,15 @@ const AdminDashboard = () => {
   ];
 
   const menuItems = [
-    { icon: Users, label: 'Employee Management', description: 'Add, edit, view employees', href: '/admin/employees', color: 'text-blue-500' },
-    { icon: MapPin, label: 'Site Management', description: 'Manage work sites', href: '/admin/sites', color: 'text-green-500' },
-    { icon: MessageSquare, label: 'Chat Inbox', description: 'Message employees', href: '/admin/chat', color: 'text-primary' },
-    { icon: Calendar, label: 'Leave Approvals', description: `${stats.pendingLeaves} pending requests`, href: '/admin/leaves', color: 'text-amber-500' },
-    { icon: CalendarDays, label: 'Company Holidays', description: 'Assign company-wide holidays', href: '/admin/holidays', color: 'text-violet-500' },
-    { icon: IndianRupee, label: 'Advance Requests', description: 'Approve employee advance salary', href: '/admin/advance-requests', color: 'text-emerald-500' },
-    { icon: Wallet, label: 'Money Ledger', description: 'Manage payments & advances', href: '/admin/ledger', color: 'text-teal-500' },
-    { icon: Bell, label: 'Notifications', description: 'View announcements history', href: '/admin/notifications', color: 'text-indigo-500' },
-    { icon: AlertCircle, label: 'Complaints', description: `${stats.openComplaints} open complaints`, href: '/admin/complaints', color: 'text-destructive' },
+    { icon: Users, label: 'Employee Management', href: '/admin/employees', description: 'Add, edit, view employees', color: 'text-blue-500' },
+    { icon: MapPin, label: 'Site Management', href: '/admin/sites', description: 'Manage work sites', color: 'text-green-500' },
+    { icon: MessageSquare, label: 'Chat Inbox', href: '/admin/chat', description: 'Message employees', color: 'text-primary' },
+    { icon: Calendar, label: 'Leave Approvals', href: '/admin/leaves', description: `${stats.pendingLeaves} pending requests`, color: 'text-amber-500' },
+    { icon: CalendarDays, label: 'Company Holidays', href: '/admin/holidays', description: 'Assign company-wide holidays', color: 'text-violet-500' },
+    { icon: IndianRupee, label: 'Advance Requests', href: '/admin/advance-requests', description: 'Approve salary advances', color: 'text-emerald-500' },
+    { icon: Wallet, label: 'Money Ledger', href: '/admin/ledger', description: 'Manage payments & advances', color: 'text-teal-500' },
+    { icon: Bell, label: 'Notifications', href: '/admin/notifications', description: 'View announcements', color: 'text-indigo-500' },
+    { icon: AlertCircle, label: 'Complaints', href: '/admin/complaints', description: `${stats.openComplaints} open complaints`, color: 'text-destructive' },
   ];
 
   return (
@@ -216,7 +248,7 @@ const AdminDashboard = () => {
           ))}
         </div>
 
-        <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-transparent">
+        <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
               <Megaphone className="h-5 w-5 text-primary" />
@@ -248,30 +280,23 @@ const AdminDashboard = () => {
           </CardContent>
         </Card>
 
-        <div>
-          <h2 className="text-sm font-medium text-muted-foreground px-1 mb-2">
-            Management
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {menuItems.map(item => (
-              <Link key={item.label} to={item.href}>
-                <Card className="cursor-pointer hover:bg-accent/50 transition-colors">
-                  <CardContent className="p-4 flex items-center gap-4">
-                    <div className={`p-2.5 rounded-xl bg-background ${item.color}`}>
-                      <item.icon className="h-5 w-5" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium">{item.label}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {item.description}
-                      </p>
-                    </div>
-                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                  </CardContent>
-                </Card>
-              </Link>
-            ))}
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {menuItems.map(item => (
+            <Link key={item.label} to={item.href}>
+              <Card className="cursor-pointer hover:bg-accent/50 transition-colors">
+                <CardContent className="p-4 flex items-center gap-4">
+                  <div className={`p-2.5 rounded-xl bg-background ${item.color}`}>
+                    <item.icon className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium">{item.label}</p>
+                    <p className="text-xs text-muted-foreground">{item.description}</p>
+                  </div>
+                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
         </div>
       </main>
     </div>

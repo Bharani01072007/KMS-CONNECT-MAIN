@@ -15,20 +15,20 @@ import Splash from "./pages/Splash";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 
-// Employee pages
+// ================= EMPLOYEE PAGES =================
 import EmployeeDashboard from "./pages/employee/Dashboard";
 import EmployeeAttendance from "./pages/employee/Attendance";
 import EmployeeAttendanceScan from "./pages/employee/AttendanceScan";
+import EmployeeAttendanceHistory from "./pages/employee/AttendanceHistory";
 import EmployeeLeaves from "./pages/employee/Leaves";
 import EmployeeLedger from "./pages/employee/Ledger";
 import EmployeeChat from "./pages/employee/Chat";
 import EmployeeComplaints from "./pages/employee/Complaints";
 import EmployeeNotifications from "./pages/employee/Notifications";
 import EmployeeProfile from "./pages/employee/Profile";
-import EmployeeAttendanceHistory from "./pages/employee/AttendanceHistory";
-import EmployeeAdvanceRequests from "./pages/employee/AdvanceRequests"; // ✅ ADDED
+import EmployeeAdvanceRequests from "./pages/employee/AdvanceRequests";
 
-// Admin pages
+// ================= ADMIN PAGES =================
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminEmployees from "./pages/admin/Employees";
 import AdminSites from "./pages/admin/Sites";
@@ -39,11 +39,13 @@ import AdminComplaints from "./pages/admin/Complaints";
 import AdminChat from "./pages/admin/Chat";
 import AdminChatInbox from "./pages/admin/ChatInbox";
 import AdminHolidays from "./pages/admin/Holidays";
-import AdminAdvanceRequests from "./pages/admin/AdvanceRequests"; // ✅ ADDED
+import AdminAdvanceRequests from "./pages/admin/AdvanceRequests";
+import AdminAttendanceHistory from "./pages/admin/AttendanceHistory"; // ✅ ADDED
 
 const queryClient = new QueryClient();
 
-/* 🔹 SAFE AUTH LISTENER */
+/* ================= SAFE AUTH REDIRECT ================= */
+
 const AuthRedirectListener = () => {
   const navigate = useNavigate();
 
@@ -62,20 +64,24 @@ const AuthRedirectListener = () => {
   return null;
 };
 
+/* ================= APP ================= */
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
+
       <BrowserRouter>
         <AuthProvider>
           <AuthRedirectListener />
 
           <Routes>
+            {/* ================= PUBLIC ================= */}
             <Route path="/" element={<Splash />} />
             <Route path="/auth" element={<Auth />} />
 
-            {/* ================= EMPLOYEE ROUTES ================= */}
+            {/* ================= EMPLOYEE ================= */}
             <Route
               path="/employee/dashboard"
               element={
@@ -101,6 +107,14 @@ const App = () => (
               }
             />
             <Route
+              path="/employee/attendance-history"
+              element={
+                <ProtectedRoute allowedRoles={["employee"]}>
+                  <EmployeeAttendanceHistory />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/employee/leaves"
               element={
                 <ProtectedRoute allowedRoles={["employee"]}>
@@ -117,7 +131,7 @@ const App = () => (
               }
             />
             <Route
-              path="/employee/advance-requests" // ✅ FIXED
+              path="/employee/advance-requests"
               element={
                 <ProtectedRoute allowedRoles={["employee"]}>
                   <EmployeeAdvanceRequests />
@@ -156,16 +170,8 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-            <Route
-              path="/employee/attendance-history"
-              element={
-                <ProtectedRoute allowedRoles={["employee"]}>
-                  <EmployeeAttendanceHistory />
-                </ProtectedRoute>
-              }
-            />
 
-            {/* ================= ADMIN ROUTES ================= */}
+            {/* ================= ADMIN ================= */}
             <Route
               path="/admin/dashboard"
               element={
@@ -179,6 +185,14 @@ const App = () => (
               element={
                 <ProtectedRoute allowedRoles={["admin"]}>
                   <AdminEmployees />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/attendance-history/:userId"
+              element={
+                <ProtectedRoute allowedRoles={["admin"]}>
+                  <AdminAttendanceHistory />
                 </ProtectedRoute>
               }
             />
@@ -215,7 +229,7 @@ const App = () => (
               }
             />
             <Route
-              path="/admin/advance-requests" // ✅ FIXED
+              path="/admin/advance-requests"
               element={
                 <ProtectedRoute allowedRoles={["admin"]}>
                   <AdminAdvanceRequests />
@@ -255,7 +269,7 @@ const App = () => (
               }
             />
 
-            {/* Catch-all */}
+            {/* ================= FALLBACK ================= */}
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

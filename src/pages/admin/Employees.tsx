@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import Header from "@/components/Header";
 
@@ -28,26 +29,7 @@ import {
   Edit,
   MapPin,
   IndianRupee,
-  X,
-  Calendar,
-  ChevronLeft,
-  ChevronRight,
-  CheckCircle,
-  Clock,
-  XCircle,
-  Plane,
 } from "lucide-react";
-
-import {
-  format,
-  startOfMonth,
-  endOfMonth,
-  eachDayOfInterval,
-  isSameMonth,
-  isSunday,
-  addMonths,
-  subMonths,
-} from "date-fns";
 
 /* ===================== TYPES ===================== */
 
@@ -66,25 +48,15 @@ interface Site {
   name: string;
 }
 
-interface AttendanceRow {
-  day: string;
-  checkin_at: string | null;
-  checkout_at: string | null;
-}
-
-interface HolidayRow {
-  holiday_date: string;
-  description: string | null;
-}
-
 /* ===================== COMPONENT ===================== */
 
 const AdminEmployees = () => {
+  const navigate = useNavigate();
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
 
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -94,18 +66,7 @@ const AdminEmployees = () => {
     site_id: "",
   });
 
-  /* ---------- MONTH VIEW ---------- */
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
-  const [holidays, setHolidays] = useState<HolidayRow[]>([]);
-  const [summary, setSummary] = useState({
-    present: 0,
-    half: 0,
-    absent: 0,
-    companyLeave: 0,
-  });
-
-  /* ===================== FETCH EMPLOYEES ===================== */
+  /* ===================== FETCH ===================== */
 
   const fetchEmployees = async () => {
     const { data } = await supabase
@@ -122,103 +83,29 @@ const AdminEmployees = () => {
     if (siteData) setSites(siteData);
   };
 
-  /* ===================== REALTIME (SAFE) ===================== */
+  /* ===================== REALTIME ===================== */
 
   useEffect(() => {
     fetchEmployees();
 
     const channel = supabase
       .channel("admin-employees-realtime")
-
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "employee_directory" },
-        () => {
-          fetchEmployees();
-        }
+        fetchEmployees
       )
-
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "employees" },
-        () => {
-          fetchEmployees();
-        }
+        fetchEmployees
       )
-
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, []);
-
-  /* ===================== MONTH DATA ===================== */
-
-  useEffect(() => {
-    if (!selectedEmployee?.user_id) return;
-
-    fetchMonthData();
-
-    const channel = supabase
-      .channel(`emp-month-${selectedEmployee.user_id}`)
-
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "attendance" },
-        () => fetchMonthData()
-      )
-
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "holidays" },
-        () => fetchMonthData()
-      )
-
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [selectedEmployee, currentMonth]);
-
-  const fetchMonthData = async () => {
-    if (!selectedEmployee?.user_id) return;
-
-    const start = format(startOfMonth(currentMonth), "yyyy-MM-dd");
-    const end = format(endOfMonth(currentMonth), "yyyy-MM-dd");
-
-    const { data: attData } = await supabase
-      .from("attendance")
-      .select("day, checkin_at, checkout_at")
-      .eq("emp_user_id", selectedEmployee.user_id)
-      .gte("day", start)
-      .lte("day", end);
-
-    const { data: holidayData } = await supabase
-      .from("holidays")
-      .select("holiday_date, description")
-      .gte("holiday_date", start)
-      .lte("holiday_date", end);
-
-    const present = attData?.filter(a => a.checkout_at)?.length || 0;
-    const half = attData?.filter(a => a.checkin_at && !a.checkout_at)?.length || 0;
-    const companyLeave = holidayData?.length || 0;
-
-    const workingDays = eachDayOfInterval({
-      start: startOfMonth(currentMonth),
-      end: endOfMonth(currentMonth),
-    }).filter(d => !isSunday(d)).length;
-
-    setAttendance(attData || []);
-    setHolidays(holidayData || []);
-    setSummary({
-      present,
-      half,
-      companyLeave,
-      absent: Math.max(0, workingDays - present - half - companyLeave),
-    });
-  };
 
   /* ===================== HELPERS ===================== */
 
@@ -234,7 +121,6 @@ const AdminEmployees = () => {
       daily_wage: emp.daily_wage?.toString() || "",
       site_id: emp.site_id || "",
     });
-    setIsDetailOpen(false);
     setIsEditOpen(true);
   };
 
@@ -255,11 +141,14 @@ const AdminEmployees = () => {
       .eq("user_id", selectedEmployee.user_id);
 
     if (error) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
     } else {
       toast({ title: "Success", description: "Employee updated successfully" });
       setIsEditOpen(false);
-      fetchEmployees();
     }
 
     setIsSaving(false);
@@ -275,7 +164,8 @@ const AdminEmployees = () => {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5" /> All Employees ({employees.length})
+              <Users className="h-5 w-5" />
+              All Employees ({employees.length})
             </CardTitle>
           </CardHeader>
 
@@ -284,32 +174,35 @@ const AdminEmployees = () => {
               <div
                 key={emp.user_id!}
                 className="p-4 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted"
-                onClick={() => {
-                  setSelectedEmployee(emp);
-                  setIsDetailOpen(true);
-                }}
+                onClick={() =>
+                  navigate(`/admin/attendance-history/${emp.user_id}`)
+                }
               >
                 <div className="flex gap-4">
                   <Avatar>
                     <AvatarImage src={emp.avatar_url || undefined} />
-                    <AvatarFallback>{emp.full_name?.[0] || "E"}</AvatarFallback>
+                    <AvatarFallback>
+                      {emp.full_name?.[0] || "E"}
+                    </AvatarFallback>
                   </Avatar>
 
                   <div className="flex-1">
                     <p className="font-medium">{emp.full_name}</p>
                     <p className="text-sm text-muted-foreground">{emp.email}</p>
                     <p className="text-sm flex gap-1">
-                      <MapPin className="h-3 w-3" /> {getSiteName(emp.site_id)}
+                      <MapPin className="h-3 w-3" />
+                      {getSiteName(emp.site_id)}
                     </p>
                     <p className="text-sm text-green-600 flex gap-1">
-                      <IndianRupee className="h-3 w-3" /> {emp.daily_wage}/day
+                      <IndianRupee className="h-3 w-3" />
+                      {emp.daily_wage}/day
                     </p>
                   </div>
 
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={(e) => {
+                    onClick={e => {
                       e.stopPropagation();
                       handleEdit(emp);
                     }}

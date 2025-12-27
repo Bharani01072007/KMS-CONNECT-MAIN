@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import Header from '@/components/Header';
@@ -43,7 +43,6 @@ import {
 
 interface AttendanceRecord {
   day: string; // yyyy-MM-dd
-  emp_user_id: string;
   checkin_at: string | null;
   checkout_at: string | null;
 }
@@ -78,40 +77,33 @@ const AttendanceHistory = () => {
 
     setIsLoading(true);
 
-    /* 🔐 AUTH VERIFICATION */
-    const { data: sessionData } = await supabase.auth.getSession();
-    console.log('🔐 SESSION:', sessionData.session);
-    console.log('🆔 AUTH UID:', sessionData.session?.user?.id);
-    console.log('👤 CONTEXT USER:', user.id);
-
     const start = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
     const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
 
-    /* 📋 ATTENDANCE FETCH (RAW) */
-    const { data: rawAttendance, error: attErr } = await supabase
+    const { data: attData, error: attErr } = await supabase
       .from('attendance')
-      .select('*')
+      .select('day, checkin_at, checkout_at')
+      .eq('emp_user_id', user.id)
       .gte('day', start)
       .lte('day', end);
 
-    console.log('📦 RAW ATTENDANCE:', rawAttendance);
-    console.log('❌ ATT ERROR:', attErr);
-
-    /* 📋 LEAVES */
-    const { data: leaveData } = await supabase
+    const { data: leaveData, error: leaveErr } = await supabase
       .from('leaves')
       .select('start_date, end_date')
       .eq('emp_user_id', user.id)
       .eq('status', 'approved');
 
-    /* ✅ FILTER ONLY CURRENT USER */
-    const userAttendance =
-      rawAttendance?.filter(a => a.emp_user_id === user.id) ?? [];
+    if (attErr || leaveErr) {
+      console.error('Attendance fetch error:', attErr || leaveErr);
+      setIsLoading(false);
+      return;
+    }
 
-    console.log('✅ USER ATTENDANCE:', userAttendance);
+    const attRows = attData ?? [];
+    const leaveRows = leaveData ?? [];
 
-    setAttendance(userAttendance);
-    setLeaves(leaveData ?? []);
+    setAttendance(attRows);
+    setLeaves(leaveRows);
 
     /* ===================== SUMMARY ===================== */
 
@@ -128,26 +120,24 @@ const AttendanceHistory = () => {
     let leave = 0;
     let absent = 0;
 
-    validDays.forEach(d => {
-      const dateStr = format(d, 'yyyy-MM-dd');
+    validDays.forEach(date => {
+      const dateStr = format(date, 'yyyy-MM-dd');
 
-      const isLeave = leaveData?.some(
+      const onLeave = leaveRows.some(
         l => dateStr >= l.start_date && dateStr <= l.end_date
       );
 
-      if (isLeave) {
+      if (onLeave) {
         leave++;
         return;
       }
 
-      const rec = userAttendance.find(a => a.day === dateStr);
+      const rec = attRows.find(a => a.day === dateStr);
 
       if (rec?.checkout_at) present++;
       else if (rec?.checkin_at) half++;
       else absent++;
     });
-
-    console.log('📊 SUMMARY:', { present, half, leave, absent });
 
     setSummary({ present, half, leave, absent });
     setIsLoading(false);
@@ -234,7 +224,9 @@ const AttendanceHistory = () => {
             <Button size="icon" variant="ghost" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>
               <ChevronLeft />
             </Button>
+
             <h2 className="font-semibold">{format(currentMonth, 'MMMM yyyy')}</h2>
+
             <Button
               size="icon"
               variant="ghost"

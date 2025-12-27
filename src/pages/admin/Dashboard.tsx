@@ -65,43 +65,52 @@ const AdminDashboard = () => {
   const [isSending, setIsSending] = useState(false);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
 
-  /* ===================== FETCH ===================== */
+  /* ===================== FETCH STATS ===================== */
 
   const fetchStats = async () => {
-    const { count: employeeCount } = await supabase
-      .from('employee_directory')
-      .select('*', { count: 'exact', head: true })
-      .eq('role', 'employee');
+    const [
+      employees,
+      sites,
+      leaves,
+      complaints,
+      attendance,
+    ] = await Promise.all([
+      supabase
+        .from('employee_directory')
+        .select('*', { count: 'exact', head: true })
+        .eq('role', 'employee'),
 
-    const { count: siteCount } = await supabase
-      .from('sites')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_active', true);
+      supabase
+        .from('sites')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_active', true),
 
-    const { count: pendingLeavesCount } = await supabase
-      .from('leaves')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'pending');
+      supabase
+        .from('leaves')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending'),
 
-    const { count: complaintsCount } = await supabase
-      .from('complaints')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'open');
+      supabase
+        .from('complaints')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'open'),
 
-    const today = new Date().toISOString().split('T')[0];
-    const { count: attendanceCount } = await supabase
-      .from('attendance')
-      .select('*', { count: 'exact', head: true })
-      .eq('day', today);
+      supabase
+        .from('attendance')
+        .select('*', { count: 'exact', head: true })
+        .eq('day', new Date().toISOString().split('T')[0]),
+    ]);
 
     setStats({
-      totalEmployees: employeeCount ?? 0,
-      totalSites: siteCount ?? 0,
-      pendingLeaves: pendingLeavesCount ?? 0,
-      openComplaints: complaintsCount ?? 0,
-      todayAttendance: attendanceCount ?? 0,
+      totalEmployees: employees.count ?? 0,
+      totalSites: sites.count ?? 0,
+      pendingLeaves: leaves.count ?? 0,
+      openComplaints: complaints.count ?? 0,
+      todayAttendance: attendance.count ?? 0,
     });
   };
+
+  /* ===================== FETCH ANNOUNCEMENTS ===================== */
 
   const fetchAnnouncements = async () => {
     const { data } = await supabase
@@ -110,34 +119,10 @@ const AdminDashboard = () => {
       .eq('title', 'Announcement')
       .order('created_at', { ascending: false });
 
-    setAnnouncements(data ?? []);
+    setAnnouncements(data || []);
   };
 
-  const refreshAll = () => {
-    fetchStats();
-    fetchAnnouncements();
-  };
-
-  /* ===================== REALTIME ===================== */
-
-  useEffect(() => {
-    refreshAll();
-
-    const channel = supabase
-      .channel('admin-dashboard-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'notifications' },
-        fetchAnnouncements
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  /* ===================== ANNOUNCEMENT ===================== */
+  /* ===================== SEND ANNOUNCEMENT ===================== */
 
   const handleSendAnnouncement = async () => {
     if (!announcement.trim()) {
@@ -150,6 +135,7 @@ const AdminDashboard = () => {
     }
 
     setIsSending(true);
+
     try {
       const { data: employees } = await supabase
         .from('employee_directory')
@@ -158,17 +144,17 @@ const AdminDashboard = () => {
 
       if (employees?.length) {
         await supabase.from('notifications').insert(
-          employees.map(e => ({
+          employees.map(emp => ({
             title: 'Announcement',
             body: announcement.trim(),
-            user_id: e.user_id!,
+            user_id: emp.user_id!,
           }))
         );
       }
 
       toast({ title: 'Success', description: 'Announcement sent' });
       setAnnouncement('');
-      fetchAnnouncements();
+      fetchAnnouncements(); // ✅ instant update
     } catch {
       toast({
         title: 'Error',
@@ -180,24 +166,71 @@ const AdminDashboard = () => {
     }
   };
 
+  /* ===================== DELETE ANNOUNCEMENT ===================== */
+
   const handleDeleteAnnouncement = async (id: string) => {
     await supabase.from('notifications').delete().eq('id', id);
-    setAnnouncements(prev => prev.filter(a => a.id !== id));
-    toast({ title: 'Deleted', description: 'Announcement removed' });
+
+    setAnnouncements(prev => prev.filter(a => a.id !== id)); // ✅ instant UI update
   };
+
+  /* ===================== REALTIME ===================== */
+
+  useEffect(() => {
+    fetchStats();
+    fetchAnnouncements();
+
+    const channel = supabase
+      .channel('admin-dashboard-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications' },
+        fetchAnnouncements
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance' },
+        fetchStats
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leaves' },
+        fetchStats
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'complaints' },
+        fetchStats
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'employee_directory' },
+        fetchStats
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'sites' },
+        fetchStats
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   /* ===================== UI ===================== */
 
   const menuItems = [
-    { icon: Users, label: 'Employee Management', href: '/admin/employees', description: 'Add, edit, view employees', color: 'text-blue-500' },
-    { icon: MapPin, label: 'Site Management', href: '/admin/sites', description: 'Manage work sites', color: 'text-green-500' },
-    { icon: MessageSquare, label: 'Chat Inbox', href: '/admin/chat', description: 'Message employees', color: 'text-primary' },
-    { icon: Calendar, label: 'Leave Approvals', href: '/admin/leaves', description: `${stats.pendingLeaves} pending requests`, color: 'text-amber-500' },
-    { icon: CalendarDays, label: 'Company Holidays', href: '/admin/holidays', description: 'Assign company-wide holidays', color: 'text-violet-500' },
-    { icon: IndianRupee, label: 'Advance Requests', href: '/admin/advance-requests', description: 'Approve salary advances', color: 'text-emerald-500' },
-    { icon: Wallet, label: 'Money Ledger', href: '/admin/ledger', description: 'Manage payments & advances', color: 'text-teal-500' },
-    { icon: Bell, label: 'Notifications', href: '/admin/notifications', description: 'View announcements', color: 'text-indigo-500' },
-    { icon: AlertCircle, label: 'Complaints', href: '/admin/complaints', description: `${stats.openComplaints} open complaints`, color: 'text-destructive' },
+    { icon: Users, label: 'Employee Management', href: '/admin/employees' },
+    { icon: MapPin, label: 'Site Management', href: '/admin/sites' },
+    { icon: MessageSquare, label: 'Chat Inbox', href: '/admin/chat' },
+    { icon: Calendar, label: 'Leave Approvals', href: '/admin/leaves' },
+    { icon: CalendarDays, label: 'Company Holidays', href: '/admin/holidays' },
+    { icon: IndianRupee, label: 'Advance Requests', href: '/admin/advance-requests' },
+    { icon: Wallet, label: 'Money Ledger', href: '/admin/ledger' },
+    { icon: Bell, label: 'Notifications', href: '/admin/notifications' },
+    { icon: AlertCircle, label: 'Complaints', href: '/admin/complaints' },
   ];
 
   return (
@@ -205,7 +238,8 @@ const AdminDashboard = () => {
       <Header title="Admin Dashboard" />
 
       <main className="p-4 max-w-6xl mx-auto space-y-6">
-        {/* ANNOUNCEMENTS */}
+
+        {/* ANNOUNCEMENT */}
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -214,12 +248,14 @@ const AdminDashboard = () => {
             </div>
             <CardDescription>Broadcast a message to all employees</CardDescription>
           </CardHeader>
+
           <CardContent className="space-y-4">
             <Textarea
               value={announcement}
               onChange={e => setAnnouncement(e.target.value)}
               placeholder="Type your announcement here..."
             />
+
             <Button onClick={handleSendAnnouncement} disabled={isSending}>
               <Send className="h-4 w-4 mr-2" />
               {isSending ? 'Sending...' : 'Send'}
@@ -238,7 +274,7 @@ const AdminDashboard = () => {
                   variant="ghost"
                   onClick={() => handleDeleteAnnouncement(a.id)}
                 >
-                  <Trash2 className="h-4 w-4 text-red-500" />
+                  <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
               </div>
             ))}
@@ -249,21 +285,17 @@ const AdminDashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {menuItems.map(item => (
             <Link key={item.label} to={item.href}>
-              <Card className="cursor-pointer hover:bg-accent/50 transition-colors">
+              <Card className="cursor-pointer hover:bg-accent/50">
                 <CardContent className="p-4 flex items-center gap-4">
-                  <div className={`p-2.5 rounded-xl bg-background ${item.color}`}>
-                    <item.icon className="h-5 w-5" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium">{item.label}</p>
-                    <p className="text-xs text-muted-foreground">{item.description}</p>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                  <item.icon className="h-5 w-5" />
+                  <p className="font-medium">{item.label}</p>
+                  <ChevronRight className="ml-auto h-5 w-5" />
                 </CardContent>
               </Card>
             </Link>
           ))}
         </div>
+
       </main>
     </div>
   );

@@ -128,12 +128,26 @@ const AdminDashboard = () => {
 
     const channel = supabase
       .channel('admin-dashboard-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_directory' }, refreshAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sites' }, refreshAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, refreshAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leaves' }, refreshAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, refreshAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, refreshAll)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications' },
+        fetchLatestAnnouncement
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance' },
+        fetchStats
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leaves' },
+        fetchStats
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'complaints' },
+        fetchStats
+      )
       .subscribe();
 
     return () => {
@@ -145,7 +159,11 @@ const AdminDashboard = () => {
 
   const handleSendAnnouncement = async () => {
     if (!announcement.trim()) {
-      toast({ title: 'Error', description: 'Please enter an announcement', variant: 'destructive' });
+      toast({
+        title: 'Error',
+        description: 'Please enter an announcement message',
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -166,51 +184,52 @@ const AdminDashboard = () => {
         );
       }
 
-      toast({ title: 'Success', description: 'Announcement sent' });
       setAnnouncement('');
+      fetchLatestAnnouncement(); // ✅ instant UI update
+
+      toast({ title: 'Success', description: 'Announcement sent' });
     } catch {
-      toast({ title: 'Error', description: 'Failed to send', variant: 'destructive' });
+      toast({
+        title: 'Error',
+        description: 'Failed to send announcement',
+        variant: 'destructive',
+      });
     } finally {
       setIsSending(false);
     }
   };
 
   const handleDeleteAnnouncement = async () => {
-    if (!latestAnnouncement?.id) return;
+    if (!latestAnnouncement) return;
 
-    const { error } = await supabase
+    await supabase
       .from('notifications')
       .delete()
       .eq('id', latestAnnouncement.id);
 
-    if (error) {
-      toast({ title: 'Error', description: 'Failed to delete', variant: 'destructive' });
-      return;
-    }
-
-    setLatestAnnouncement(null);
+    setLatestAnnouncement(null); // ✅ instant UI
     toast({ title: 'Deleted', description: 'Announcement removed' });
   };
 
   /* ===================== UI ===================== */
 
   const statCards = [
-    { icon: Users, label: 'Employees', value: stats.totalEmployees, color: 'text-blue-500', bg: 'bg-blue-500/10' },
-    { icon: Building, label: 'Sites', value: stats.totalSites, color: 'text-green-500', bg: 'bg-green-500/10' },
-    { icon: Clock, label: 'Today Present', value: stats.todayAttendance, color: 'text-purple-500', bg: 'bg-purple-500/10' },
-    { icon: Calendar, label: 'Pending Leaves', value: stats.pendingLeaves, color: 'text-amber-500', bg: 'bg-amber-500/10' },
+    { icon: Users, label: 'Employees', value: stats.totalEmployees },
+    { icon: Building, label: 'Sites', value: stats.totalSites },
+    { icon: Clock, label: 'Today Present', value: stats.todayAttendance },
+    { icon: Calendar, label: 'Pending Leaves', value: stats.pendingLeaves },
   ];
 
   const menuItems = [
-    { icon: Users, label: 'Employee Management', href: '/admin/employees', description: 'Add, edit, view employees', color: 'text-blue-500' },
-    { icon: MapPin, label: 'Site Management', href: '/admin/sites', description: 'Manage work sites', color: 'text-green-500' },
-    { icon: MessageSquare, label: 'Chat Inbox', href: '/admin/chat', description: 'Message employees', color: 'text-primary' },
-    { icon: Calendar, label: 'Leave Approvals', href: '/admin/leaves', description: `${stats.pendingLeaves} pending requests`, color: 'text-amber-500' },
-    { icon: CalendarDays, label: 'Company Holidays', href: '/admin/holidays', description: 'Assign holidays', color: 'text-violet-500' },
-    { icon: IndianRupee, label: 'Advance Requests', href: '/admin/advance-requests', description: 'Approve advances', color: 'text-emerald-500' },
-    { icon: Wallet, label: 'Money Ledger', href: '/admin/ledger', description: 'Payments & advances', color: 'text-teal-500' },
-    { icon: Bell, label: 'Notifications', href: '/admin/notifications', description: 'View announcements', color: 'text-indigo-500' },
-    { icon: AlertCircle, label: 'Complaints', href: '/admin/complaints', description: `${stats.openComplaints} open complaints`, color: 'text-destructive' },
+    { icon: Users, label: 'Employee Management', href: '/admin/employees' },
+    { icon: MapPin, label: 'Site Management', href: '/admin/sites' },
+    { icon: MessageSquare, label: 'Chat Inbox', href: '/admin/chat' },
+    { icon: Calendar, label: 'Leave Approvals', href: '/admin/leaves' },
+    { icon: CalendarDays, label: 'Company Holidays', href: '/admin/holidays' },
+    { icon: IndianRupee, label: 'Advance Requests', href: '/admin/advance-requests' },
+    { icon: Wallet, label: 'Money Ledger', href: '/admin/ledger' },
+    { icon: Bell, label: 'Notifications', href: '/admin/notifications' },
+    { icon: AlertCircle, label: 'Complaints', href: '/admin/complaints' },
   ];
 
   return (
@@ -219,71 +238,68 @@ const AdminDashboard = () => {
 
       <main className="p-4 max-w-6xl mx-auto space-y-6">
 
+        {/* STATS */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {statCards.map(stat => (
             <Card key={stat.label}>
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${stat.bg}`}>
-                  <stat.icon className={`h-5 w-5 ${stat.color}`} />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{stat.value}</p>
-                  <p className="text-xs text-muted-foreground">{stat.label}</p>
-                </div>
+              <CardContent className="p-4">
+                <p className="text-2xl font-bold">{stat.value}</p>
+                <p className="text-xs text-muted-foreground">{stat.label}</p>
               </CardContent>
             </Card>
           ))}
         </div>
 
+        {/* ANNOUNCEMENT */}
         <Card>
           <CardHeader>
-            <div className="flex items-center gap-2">
-              <Megaphone className="h-5 w-5 text-primary" />
-              <CardTitle>Send Announcement</CardTitle>
-            </div>
+            <CardTitle className="flex items-center gap-2">
+              <Megaphone className="h-5 w-5" /> Send Announcement
+            </CardTitle>
             <CardDescription>Broadcast a message</CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-4">
-            <Textarea value={announcement} onChange={e => setAnnouncement(e.target.value)} />
+            <Textarea
+              value={announcement}
+              onChange={e => setAnnouncement(e.target.value)}
+              placeholder="Type your announcement here..."
+            />
+
             <Button onClick={handleSendAnnouncement} disabled={isSending}>
-              <Send className="h-4 w-4 mr-2" /> Send
+              <Send className="h-4 w-4 mr-2" />
+              {isSending ? 'Sending...' : 'Send'}
             </Button>
 
             {latestAnnouncement && (
-              <div className="p-3 bg-muted/50 rounded-lg relative">
+              <div className="p-3 bg-muted/50 rounded-lg flex justify-between">
+                <div>
+                  <p className="text-sm">{latestAnnouncement.body}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {latestAnnouncement.created_at &&
+                      format(new Date(latestAnnouncement.created_at), 'PPp')}
+                  </p>
+                </div>
                 <Button
                   size="icon"
-                  variant="ghost"
+                  variant="destructive"
                   onClick={handleDeleteAnnouncement}
-                  className="absolute top-2 right-2"
                 >
-                  <Trash2 className="h-4 w-4 text-destructive" />
+                  <Trash2 className="h-4 w-4" />
                 </Button>
-
-                <p className="text-sm">{latestAnnouncement.body}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {latestAnnouncement.created_at &&
-                    format(new Date(latestAnnouncement.created_at), 'PPp')}
-                </p>
               </div>
             )}
           </CardContent>
         </Card>
 
+        {/* MENU */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {menuItems.map(item => (
             <Link key={item.label} to={item.href}>
-              <Card className="cursor-pointer hover:bg-accent/50 transition-colors">
-                <CardContent className="p-4 flex items-center gap-4">
-                  <div className={`p-2.5 rounded-xl bg-background ${item.color}`}>
-                    <item.icon className="h-5 w-5" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium">{item.label}</p>
-                    <p className="text-xs text-muted-foreground">{item.description}</p>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
+              <Card className="hover:bg-accent/50">
+                <CardContent className="p-4 flex items-center justify-between">
+                  <span>{item.label}</span>
+                  <ChevronRight />
                 </CardContent>
               </Card>
             </Link>

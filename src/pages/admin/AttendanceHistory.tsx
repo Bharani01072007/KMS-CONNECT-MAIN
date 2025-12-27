@@ -57,10 +57,12 @@ interface LeaveRecord {
 const AdminAttendanceHistory = () => {
   const { employeeId } = useParams<{ employeeId: string }>();
 
+  const [sessionReady, setSessionReady] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const [summary, setSummary] = useState({
@@ -70,10 +72,20 @@ const AdminAttendanceHistory = () => {
     absent: 0,
   });
 
+  /* ===================== SESSION READY ===================== */
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        setSessionReady(true);
+      }
+    });
+  }, []);
+
   /* ===================== FETCH DATA ===================== */
 
   const fetchData = async () => {
-    if (!employeeId) return;
+    if (!employeeId || !sessionReady) return;
 
     try {
       setIsLoading(true);
@@ -144,11 +156,9 @@ const AdminAttendanceHistory = () => {
     }
   };
 
-  /* ===================== EFFECT ===================== */
-
   useEffect(() => {
     fetchData();
-  }, [employeeId, currentMonth]);
+  }, [employeeId, currentMonth, sessionReady]);
 
   /* ===================== HELPERS ===================== */
 
@@ -157,10 +167,7 @@ const AdminAttendanceHistory = () => {
 
   const getDayStatus = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
 
-    if (date > today) return 'future';
     if (isLeaveDay(dateStr)) return 'leave';
 
     const att = attendance.find(a => a.day === dateStr);
@@ -207,7 +214,7 @@ const AdminAttendanceHistory = () => {
 
   /* ===================== UI ===================== */
 
-  if (isLoading) {
+  if (isLoading || !sessionReady) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin" />

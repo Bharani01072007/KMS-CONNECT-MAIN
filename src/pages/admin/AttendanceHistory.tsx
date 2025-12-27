@@ -10,7 +10,6 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-
 import {
   Dialog,
   DialogContent,
@@ -62,120 +61,107 @@ const AdminAttendanceHistory = () => {
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const [summary, setSummary] = useState({
     present: 0,
-    halfDays: 0,
-    leaves: 0,
+    half: 0,
+    leave: 0,
     absent: 0,
   });
 
-  /* ===================== FETCH ===================== */
+  /* ===================== FETCH DATA ===================== */
 
   const fetchData = async () => {
     if (!employeeId) return;
 
-    setIsLoading(true);
+    try {
+      setIsLoading(true);
 
-    const start = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
-    const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
+      const start = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
+      const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
 
-    const { data: attData } = await supabase
-      .from('attendance')
-      .select('day, attendance_type, checkin_at, checkout_at')
-      .eq('emp_user_id', employeeId)
-      .gte('day', start)
-      .lte('day', end);
+      const { data: attData } = await supabase
+        .from('attendance')
+        .select('day, attendance_type, checkin_at, checkout_at')
+        .eq('emp_user_id', employeeId)
+        .gte('day', start)
+        .lte('day', end);
 
-    const { data: leaveData } = await supabase
-      .from('leaves')
-      .select('start_date, end_date')
-      .eq('emp_user_id', employeeId)
-      .eq('status', 'approved');
+      const { data: leaveData } = await supabase
+        .from('leaves')
+        .select('start_date, end_date')
+        .eq('emp_user_id', employeeId)
+        .eq('status', 'approved');
 
-    const attendanceRows: AttendanceRecord[] =
-      (attData || []).map(a => ({
-        day: a.day,
-        attendance_type:
-          a.attendance_type === 'full' || a.attendance_type === 'half'
-            ? a.attendance_type
-            : null,
-        checkin_at: a.checkin_at,
-        checkout_at: a.checkout_at,
-      }));
+      const attendanceRows: AttendanceRecord[] =
+        (attData || []).map(a => ({
+          day: a.day,
+          attendance_type:
+            a.attendance_type === 'full' || a.attendance_type === 'half'
+              ? a.attendance_type
+              : null,
+          checkin_at: a.checkin_at,
+          checkout_at: a.checkout_at,
+        }));
 
-    const leaveRows = leaveData || [];
+      const leaveRows = leaveData || [];
 
-    setAttendance(attendanceRows);
-    setLeaves(leaveRows);
+      setAttendance(attendanceRows);
+      setLeaves(leaveRows);
 
-    /* ===================== SUMMARY ===================== */
+      /* ===================== SUMMARY ===================== */
 
-    const fullDays = attendanceRows.filter(a => a.attendance_type === 'full').length;
-    const halfDays = attendanceRows.filter(a => a.attendance_type === 'half').length;
+      const full = attendanceRows.filter(a => a.attendance_type === 'full').length;
+      const half = attendanceRows.filter(a => a.attendance_type === 'half').length;
 
-    const leaveDays = leaveRows.reduce((sum, l) => {
-      const days = eachDayOfInterval({
-        start: new Date(l.start_date),
-        end: new Date(l.end_date),
+      const leave = leaveRows.reduce((sum, l) => {
+        const days = eachDayOfInterval({
+          start: new Date(l.start_date),
+          end: new Date(l.end_date),
+        });
+        return sum + days.length;
+      }, 0);
+
+      const today = new Date();
+      const validDays = eachDayOfInterval({
+        start: startOfMonth(currentMonth),
+        end: today < endOfMonth(currentMonth) ? today : endOfMonth(currentMonth),
       });
-      return sum + days.length;
-    }, 0);
 
-    const today = new Date();
-    const validDays = eachDayOfInterval({
-      start: startOfMonth(currentMonth),
-      end: today < endOfMonth(currentMonth) ? today : endOfMonth(currentMonth),
-    });
+      const absent = validDays.length - full - half - leave;
 
-    const absent =
-      validDays.length - fullDays - halfDays - leaveDays;
-
-    setSummary({
-      present: fullDays,
-      halfDays,
-      leaves: leaveDays,
-      absent: Math.max(0, absent),
-    });
-
-    setIsLoading(false);
+      setSummary({
+        present: full,
+        half,
+        leave,
+        absent: Math.max(0, absent),
+      });
+    } catch (err) {
+      console.error('Admin Attendance fetch error:', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  /* ===================== REALTIME ===================== */
+  /* ===================== EFFECT ===================== */
 
   useEffect(() => {
     fetchData();
-
-    const channel = supabase
-      .channel(`admin-attendance-${employeeId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'attendance' },
-        fetchData
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'leaves' },
-        fetchData
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [employeeId, currentMonth]);
 
   /* ===================== HELPERS ===================== */
 
-  const isLeave = (dateStr: string) =>
+  const isLeaveDay = (dateStr: string) =>
     leaves.some(l => dateStr >= l.start_date && dateStr <= l.end_date);
 
   const getDayStatus = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    if (isLeave(dateStr)) return 'leave';
+    if (date > today) return 'future';
+    if (isLeaveDay(dateStr)) return 'leave';
 
     const att = attendance.find(a => a.day === dateStr);
     if (att?.attendance_type === 'full') return 'present';
@@ -202,11 +188,11 @@ const AdminAttendanceHistory = () => {
   const selectedAttendance = attendance.find(a => a.day === selectedDate);
 
   const selectedStatus = selectedDate
-    ? isLeave(selectedDate)
+    ? isLeaveDay(selectedDate)
       ? 'Leave'
-      : selectedAttendance?.checkout_at
+      : selectedAttendance?.attendance_type === 'full'
       ? 'Present'
-      : selectedAttendance?.checkin_at
+      : selectedAttendance?.attendance_type === 'half'
       ? 'Half Day'
       : 'Absent'
     : '';
@@ -234,6 +220,7 @@ const AdminAttendanceHistory = () => {
       <Header title="Attendance History" backTo="/admin/employees" />
 
       <main className="p-4 max-w-lg mx-auto space-y-4">
+
         {/* MONTH NAV */}
         <Card>
           <CardContent className="p-4 flex items-center justify-between">
@@ -241,9 +228,7 @@ const AdminAttendanceHistory = () => {
               <ChevronLeft />
             </Button>
 
-            <h2 className="font-semibold">
-              {format(currentMonth, 'MMMM yyyy')}
-            </h2>
+            <h2 className="font-semibold">{format(currentMonth, 'MMMM yyyy')}</h2>
 
             <Button
               size="icon"
@@ -259,8 +244,8 @@ const AdminAttendanceHistory = () => {
         {/* SUMMARY */}
         <div className="grid grid-cols-4 gap-2">
           <Summary icon={<CheckCircle className="text-green-500" />} label="Present" value={summary.present} />
-          <Summary icon={<Clock className="text-yellow-500" />} label="Half Day" value={summary.halfDays} />
-          <Summary icon={<Plane className="text-blue-500" />} label="Leaves" value={summary.leaves} />
+          <Summary icon={<Clock className="text-yellow-500" />} label="Half Day" value={summary.half} />
+          <Summary icon={<Plane className="text-blue-500" />} label="Leaves" value={summary.leave} />
           <Summary icon={<XCircle className="text-red-400" />} label="Absent" value={summary.absent} />
         </div>
 
@@ -287,14 +272,14 @@ const AdminAttendanceHistory = () => {
               ))}
 
               {daysInMonth.map(date => {
-                const status = getDayStatus(date);
                 const dateStr = format(date, 'yyyy-MM-dd');
+                const status = getDayStatus(date);
 
                 return (
                   <button
                     key={dateStr}
                     onClick={() => setSelectedDate(dateStr)}
-                    className="aspect-square flex flex-col items-center justify-center hover:bg-muted rounded"
+                    className="aspect-square flex flex-col items-center justify-center rounded hover:bg-muted"
                   >
                     <span className="text-xs">{format(date, 'd')}</span>
                     <div className={`w-3 h-3 rounded-full ${getStatusColor(status)}`} />
@@ -305,7 +290,7 @@ const AdminAttendanceHistory = () => {
           </CardContent>
         </Card>
 
-        {/* DAY DETAIL */}
+        {/* DAY DETAILS */}
         <Dialog open={!!selectedDate} onOpenChange={() => setSelectedDate(null)}>
           <DialogContent>
             <DialogHeader>
@@ -316,21 +301,12 @@ const AdminAttendanceHistory = () => {
 
             <div className="space-y-2 text-sm">
               <p><strong>Status:</strong> {selectedStatus}</p>
-              <p>
-                <strong>Check In:</strong>{' '}
-                {selectedAttendance?.checkin_at
-                  ? format(new Date(selectedAttendance.checkin_at), 'hh:mm a')
-                  : '-'}
-              </p>
-              <p>
-                <strong>Check Out:</strong>{' '}
-                {selectedAttendance?.checkout_at
-                  ? format(new Date(selectedAttendance.checkout_at), 'hh:mm a')
-                  : '-'}
-              </p>
+              <p><strong>Check In:</strong> {selectedAttendance?.checkin_at ? format(new Date(selectedAttendance.checkin_at), 'hh:mm a') : '-'}</p>
+              <p><strong>Check Out:</strong> {selectedAttendance?.checkout_at ? format(new Date(selectedAttendance.checkout_at), 'hh:mm a') : '-'}</p>
             </div>
           </DialogContent>
         </Dialog>
+
       </main>
     </div>
   );

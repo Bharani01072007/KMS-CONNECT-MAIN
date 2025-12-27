@@ -12,6 +12,13 @@ import {
 import { Button } from '@/components/ui/button';
 
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+
+import {
   Loader2,
   Calendar,
   ChevronLeft,
@@ -54,6 +61,8 @@ const AttendanceHistory = () => {
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const [summary, setSummary] = useState({
     present: 0,
@@ -168,6 +177,18 @@ const AttendanceHistory = () => {
     }
   };
 
+  const selectedAttendance = attendance.find(a => a.day === selectedDate);
+
+  const selectedStatus = selectedDate
+    ? isLeaveDay(selectedDate)
+      ? 'Leave'
+      : selectedAttendance?.checkout_at
+      ? 'Present'
+      : selectedAttendance?.checkin_at
+      ? 'Half Day'
+      : 'Absent'
+    : '';
+
   const daysInMonth = eachDayOfInterval({
     start: startOfMonth(currentMonth),
     end: endOfMonth(currentMonth),
@@ -244,16 +265,50 @@ const AttendanceHistory = () => {
 
               {daysInMonth.map(date => {
                 const status = getDayStatus(date);
+                const dateStr = format(date, 'yyyy-MM-dd');
+
                 return (
-                  <div key={date.toISOString()} className="aspect-square flex flex-col items-center justify-center">
+                  <button
+                    key={dateStr}
+                    onClick={() => setSelectedDate(dateStr)}
+                    className="aspect-square flex flex-col items-center justify-center rounded hover:bg-muted"
+                  >
                     <span className="text-xs text-muted-foreground">{format(date, 'd')}</span>
                     <div className={`w-3 h-3 rounded-full ${getStatusColor(status)}`} />
-                  </div>
+                  </button>
                 );
               })}
             </div>
           </CardContent>
         </Card>
+
+        {/* DAY DETAILS */}
+        <Dialog open={!!selectedDate} onOpenChange={() => setSelectedDate(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {selectedDate && format(new Date(selectedDate), 'PPP')}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-2 text-sm">
+              <p><strong>Status:</strong> {selectedStatus}</p>
+              <p>
+                <strong>Check In:</strong>{' '}
+                {selectedAttendance?.checkin_at
+                  ? format(new Date(selectedAttendance.checkin_at), 'hh:mm a')
+                  : '-'}
+              </p>
+              <p>
+                <strong>Check Out:</strong>{' '}
+                {selectedAttendance?.checkout_at
+                  ? format(new Date(selectedAttendance.checkout_at), 'hh:mm a')
+                  : '-'}
+              </p>
+            </div>
+          </DialogContent>
+        </Dialog>
+
       </main>
     </div>
   );

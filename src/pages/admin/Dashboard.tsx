@@ -43,7 +43,7 @@ interface DashboardStats {
 }
 
 interface LatestAnnouncement {
-  id?: string;
+  id: string;
   body: string | null;
   created_at: string | null;
 }
@@ -113,7 +113,7 @@ const AdminDashboard = () => {
       .limit(1)
       .maybeSingle();
 
-    if (data) setLatestAnnouncement(data);
+    setLatestAnnouncement(data ?? null);
   };
 
   const refreshAll = () => {
@@ -145,7 +145,7 @@ const AdminDashboard = () => {
 
   const handleSendAnnouncement = async () => {
     if (!announcement.trim()) {
-      toast({ title: 'Error', description: 'Please enter an announcement message', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Please enter an announcement', variant: 'destructive' });
       return;
     }
 
@@ -169,7 +169,7 @@ const AdminDashboard = () => {
       toast({ title: 'Success', description: 'Announcement sent' });
       setAnnouncement('');
     } catch {
-      toast({ title: 'Error', description: 'Failed to send announcement', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Failed to send', variant: 'destructive' });
     } finally {
       setIsSending(false);
     }
@@ -178,9 +178,18 @@ const AdminDashboard = () => {
   const handleDeleteAnnouncement = async () => {
     if (!latestAnnouncement?.id) return;
 
-    await supabase.from('notifications').delete().eq('id', latestAnnouncement.id);
-    toast({ title: 'Deleted', description: 'Announcement removed' });
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('id', latestAnnouncement.id);
+
+    if (error) {
+      toast({ title: 'Error', description: 'Failed to delete', variant: 'destructive' });
+      return;
+    }
+
     setLatestAnnouncement(null);
+    toast({ title: 'Deleted', description: 'Announcement removed' });
   };
 
   /* ===================== UI ===================== */
@@ -197,9 +206,9 @@ const AdminDashboard = () => {
     { icon: MapPin, label: 'Site Management', href: '/admin/sites', description: 'Manage work sites', color: 'text-green-500' },
     { icon: MessageSquare, label: 'Chat Inbox', href: '/admin/chat', description: 'Message employees', color: 'text-primary' },
     { icon: Calendar, label: 'Leave Approvals', href: '/admin/leaves', description: `${stats.pendingLeaves} pending requests`, color: 'text-amber-500' },
-    { icon: CalendarDays, label: 'Company Holidays', href: '/admin/holidays', description: 'Assign company-wide holidays', color: 'text-violet-500' },
-    { icon: IndianRupee, label: 'Advance Requests', href: '/admin/advance-requests', description: 'Approve salary advances', color: 'text-emerald-500' },
-    { icon: Wallet, label: 'Money Ledger', href: '/admin/ledger', description: 'Manage payments & advances', color: 'text-teal-500' },
+    { icon: CalendarDays, label: 'Company Holidays', href: '/admin/holidays', description: 'Assign holidays', color: 'text-violet-500' },
+    { icon: IndianRupee, label: 'Advance Requests', href: '/admin/advance-requests', description: 'Approve advances', color: 'text-emerald-500' },
+    { icon: Wallet, label: 'Money Ledger', href: '/admin/ledger', description: 'Payments & advances', color: 'text-teal-500' },
     { icon: Bell, label: 'Notifications', href: '/admin/notifications', description: 'View announcements', color: 'text-indigo-500' },
     { icon: AlertCircle, label: 'Complaints', href: '/admin/complaints', description: `${stats.openComplaints} open complaints`, color: 'text-destructive' },
   ];
@@ -232,7 +241,7 @@ const AdminDashboard = () => {
               <Megaphone className="h-5 w-5 text-primary" />
               <CardTitle>Send Announcement</CardTitle>
             </div>
-            <CardDescription>Broadcast a message to all employees</CardDescription>
+            <CardDescription>Broadcast a message</CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-4">
@@ -242,14 +251,21 @@ const AdminDashboard = () => {
             </Button>
 
             {latestAnnouncement && (
-              <div className="p-3 bg-muted/50 rounded-lg space-y-2">
-                <p className="text-sm">{latestAnnouncement.body}</p>
-                <p className="text-xs text-muted-foreground">
-                  {latestAnnouncement.created_at && format(new Date(latestAnnouncement.created_at), 'PPp')}
-                </p>
-                <Button variant="destructive" size="sm" onClick={handleDeleteAnnouncement}>
-                  <Trash2 className="h-4 w-4 mr-1" /> Delete
+              <div className="p-3 bg-muted/50 rounded-lg relative">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={handleDeleteAnnouncement}
+                  className="absolute top-2 right-2"
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
+
+                <p className="text-sm">{latestAnnouncement.body}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {latestAnnouncement.created_at &&
+                    format(new Date(latestAnnouncement.created_at), 'PPp')}
+                </p>
               </div>
             )}
           </CardContent>
@@ -258,7 +274,7 @@ const AdminDashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {menuItems.map(item => (
             <Link key={item.label} to={item.href}>
-              <Card className="cursor-pointer hover:bg-accent/50">
+              <Card className="cursor-pointer hover:bg-accent/50 transition-colors">
                 <CardContent className="p-4 flex items-center gap-4">
                   <div className={`p-2.5 rounded-xl bg-background ${item.color}`}>
                     <item.icon className="h-5 w-5" />

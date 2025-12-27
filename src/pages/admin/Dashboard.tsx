@@ -27,6 +27,7 @@ import {
   Megaphone,
   CalendarDays,
   IndianRupee,
+  Trash2,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
@@ -42,6 +43,7 @@ interface DashboardStats {
 }
 
 interface LatestAnnouncement {
+  id?: string;
   body: string | null;
   created_at: string | null;
 }
@@ -75,7 +77,7 @@ const AdminDashboard = () => {
     const { count: siteCount } = await supabase
       .from('sites')
       .select('*', { count: 'exact', head: true })
-      .eq('is_active', true); // ✅ FIX: respect soft delete
+      .eq('is_active', true);
 
     const { count: pendingLeavesCount } = await supabase
       .from('leaves')
@@ -105,7 +107,7 @@ const AdminDashboard = () => {
   const fetchLatestAnnouncement = async () => {
     const { data } = await supabase
       .from('notifications')
-      .select('body, created_at')
+      .select('id, body, created_at')
       .eq('title', 'Announcement')
       .order('created_at', { ascending: false })
       .limit(1)
@@ -119,44 +121,19 @@ const AdminDashboard = () => {
     fetchLatestAnnouncement();
   };
 
-  /* ===================== REALTIME (SUPABASE v2 SAFE) ===================== */
+  /* ===================== REALTIME ===================== */
 
   useEffect(() => {
     refreshAll();
 
     const channel = supabase
       .channel('admin-dashboard-realtime')
-
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'employee_directory' },
-        refreshAll
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'sites' },
-        refreshAll
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'attendance' },
-        refreshAll
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'leaves' },
-        refreshAll
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'complaints' },
-        refreshAll
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'notifications' },
-        refreshAll
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_directory' }, refreshAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sites' }, refreshAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, refreshAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leaves' }, refreshAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, refreshAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, refreshAll)
       .subscribe();
 
     return () => {
@@ -168,11 +145,7 @@ const AdminDashboard = () => {
 
   const handleSendAnnouncement = async () => {
     if (!announcement.trim()) {
-      toast({
-        title: 'Error',
-        description: 'Please enter an announcement message',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: 'Please enter an announcement message', variant: 'destructive' });
       return;
     }
 
@@ -196,14 +169,18 @@ const AdminDashboard = () => {
       toast({ title: 'Success', description: 'Announcement sent' });
       setAnnouncement('');
     } catch {
-      toast({
-        title: 'Error',
-        description: 'Failed to send announcement',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: 'Failed to send announcement', variant: 'destructive' });
     } finally {
       setIsSending(false);
     }
+  };
+
+  const handleDeleteAnnouncement = async () => {
+    if (!latestAnnouncement?.id) return;
+
+    await supabase.from('notifications').delete().eq('id', latestAnnouncement.id);
+    toast({ title: 'Deleted', description: 'Announcement removed' });
+    setLatestAnnouncement(null);
   };
 
   /* ===================== UI ===================== */
@@ -232,6 +209,7 @@ const AdminDashboard = () => {
       <Header title="Admin Dashboard" />
 
       <main className="p-4 max-w-6xl mx-auto space-y-6">
+
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {statCards.map(stat => (
             <Card key={stat.label}>
@@ -256,25 +234,22 @@ const AdminDashboard = () => {
             </div>
             <CardDescription>Broadcast a message to all employees</CardDescription>
           </CardHeader>
+
           <CardContent className="space-y-4">
-            <Textarea
-              value={announcement}
-              onChange={e => setAnnouncement(e.target.value)}
-              placeholder="Type your announcement here..."
-            />
+            <Textarea value={announcement} onChange={e => setAnnouncement(e.target.value)} />
             <Button onClick={handleSendAnnouncement} disabled={isSending}>
-              <Send className="h-4 w-4 mr-2" />
-              {isSending ? 'Sending...' : 'Send'}
+              <Send className="h-4 w-4 mr-2" /> Send
             </Button>
 
             {latestAnnouncement && (
-              <div className="p-3 bg-muted/50 rounded-lg">
-                <p className="text-xs text-muted-foreground">Latest Announcement</p>
+              <div className="p-3 bg-muted/50 rounded-lg space-y-2">
                 <p className="text-sm">{latestAnnouncement.body}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {latestAnnouncement.created_at &&
-                    format(new Date(latestAnnouncement.created_at), 'PPp')}
+                <p className="text-xs text-muted-foreground">
+                  {latestAnnouncement.created_at && format(new Date(latestAnnouncement.created_at), 'PPp')}
                 </p>
+                <Button variant="destructive" size="sm" onClick={handleDeleteAnnouncement}>
+                  <Trash2 className="h-4 w-4 mr-1" /> Delete
+                </Button>
               </div>
             )}
           </CardContent>
@@ -283,7 +258,7 @@ const AdminDashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {menuItems.map(item => (
             <Link key={item.label} to={item.href}>
-              <Card className="cursor-pointer hover:bg-accent/50 transition-colors">
+              <Card className="cursor-pointer hover:bg-accent/50">
                 <CardContent className="p-4 flex items-center gap-4">
                   <div className={`p-2.5 rounded-xl bg-background ${item.color}`}>
                     <item.icon className="h-5 w-5" />

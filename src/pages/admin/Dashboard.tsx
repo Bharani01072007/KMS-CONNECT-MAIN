@@ -42,7 +42,7 @@ interface DashboardStats {
   todayAttendance: number;
 }
 
-interface LatestAnnouncement {
+interface Announcement {
   id: string;
   body: string | null;
   created_at: string | null;
@@ -63,8 +63,7 @@ const AdminDashboard = () => {
 
   const [announcement, setAnnouncement] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [latestAnnouncement, setLatestAnnouncement] =
-    useState<LatestAnnouncement | null>(null);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
 
   /* ===================== FETCH ===================== */
 
@@ -104,21 +103,19 @@ const AdminDashboard = () => {
     });
   };
 
-  const fetchLatestAnnouncement = async () => {
+  const fetchAnnouncements = async () => {
     const { data } = await supabase
       .from('notifications')
       .select('id, body, created_at')
       .eq('title', 'Announcement')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .order('created_at', { ascending: false });
 
-    setLatestAnnouncement(data ?? null);
+    setAnnouncements(data ?? []);
   };
 
   const refreshAll = () => {
     fetchStats();
-    fetchLatestAnnouncement();
+    fetchAnnouncements();
   };
 
   /* ===================== REALTIME ===================== */
@@ -131,22 +128,7 @@ const AdminDashboard = () => {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'notifications' },
-        fetchLatestAnnouncement
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'attendance' },
-        fetchStats
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'leaves' },
-        fetchStats
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'complaints' },
-        fetchStats
+        fetchAnnouncements
       )
       .subscribe();
 
@@ -184,10 +166,9 @@ const AdminDashboard = () => {
         );
       }
 
-      setAnnouncement('');
-      fetchLatestAnnouncement(); // ✅ instant UI update
-
       toast({ title: 'Success', description: 'Announcement sent' });
+      setAnnouncement('');
+      fetchAnnouncements();
     } catch {
       toast({
         title: 'Error',
@@ -199,37 +180,24 @@ const AdminDashboard = () => {
     }
   };
 
-  const handleDeleteAnnouncement = async () => {
-    if (!latestAnnouncement) return;
-
-    await supabase
-      .from('notifications')
-      .delete()
-      .eq('id', latestAnnouncement.id);
-
-    setLatestAnnouncement(null); // ✅ instant UI
+  const handleDeleteAnnouncement = async (id: string) => {
+    await supabase.from('notifications').delete().eq('id', id);
+    setAnnouncements(prev => prev.filter(a => a.id !== id));
     toast({ title: 'Deleted', description: 'Announcement removed' });
   };
 
   /* ===================== UI ===================== */
 
-  const statCards = [
-    { icon: Users, label: 'Employees', value: stats.totalEmployees },
-    { icon: Building, label: 'Sites', value: stats.totalSites },
-    { icon: Clock, label: 'Today Present', value: stats.todayAttendance },
-    { icon: Calendar, label: 'Pending Leaves', value: stats.pendingLeaves },
-  ];
-
   const menuItems = [
-    { icon: Users, label: 'Employee Management', href: '/admin/employees' },
-    { icon: MapPin, label: 'Site Management', href: '/admin/sites' },
-    { icon: MessageSquare, label: 'Chat Inbox', href: '/admin/chat' },
-    { icon: Calendar, label: 'Leave Approvals', href: '/admin/leaves' },
-    { icon: CalendarDays, label: 'Company Holidays', href: '/admin/holidays' },
-    { icon: IndianRupee, label: 'Advance Requests', href: '/admin/advance-requests' },
-    { icon: Wallet, label: 'Money Ledger', href: '/admin/ledger' },
-    { icon: Bell, label: 'Notifications', href: '/admin/notifications' },
-    { icon: AlertCircle, label: 'Complaints', href: '/admin/complaints' },
+    { icon: Users, label: 'Employee Management', href: '/admin/employees', description: 'Add, edit, view employees', color: 'text-blue-500' },
+    { icon: MapPin, label: 'Site Management', href: '/admin/sites', description: 'Manage work sites', color: 'text-green-500' },
+    { icon: MessageSquare, label: 'Chat Inbox', href: '/admin/chat', description: 'Message employees', color: 'text-primary' },
+    { icon: Calendar, label: 'Leave Approvals', href: '/admin/leaves', description: `${stats.pendingLeaves} pending requests`, color: 'text-amber-500' },
+    { icon: CalendarDays, label: 'Company Holidays', href: '/admin/holidays', description: 'Assign company-wide holidays', color: 'text-violet-500' },
+    { icon: IndianRupee, label: 'Advance Requests', href: '/admin/advance-requests', description: 'Approve salary advances', color: 'text-emerald-500' },
+    { icon: Wallet, label: 'Money Ledger', href: '/admin/ledger', description: 'Manage payments & advances', color: 'text-teal-500' },
+    { icon: Bell, label: 'Notifications', href: '/admin/notifications', description: 'View announcements', color: 'text-indigo-500' },
+    { icon: AlertCircle, label: 'Complaints', href: '/admin/complaints', description: `${stats.openComplaints} open complaints`, color: 'text-destructive' },
   ];
 
   return (
@@ -237,58 +205,43 @@ const AdminDashboard = () => {
       <Header title="Admin Dashboard" />
 
       <main className="p-4 max-w-6xl mx-auto space-y-6">
-
-        {/* STATS */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {statCards.map(stat => (
-            <Card key={stat.label}>
-              <CardContent className="p-4">
-                <p className="text-2xl font-bold">{stat.value}</p>
-                <p className="text-xs text-muted-foreground">{stat.label}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-
-        {/* ANNOUNCEMENT */}
+        {/* ANNOUNCEMENTS */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Megaphone className="h-5 w-5" /> Send Announcement
-            </CardTitle>
-            <CardDescription>Broadcast a message</CardDescription>
+            <div className="flex items-center gap-2">
+              <Megaphone className="h-5 w-5 text-primary" />
+              <CardTitle>Send Announcement</CardTitle>
+            </div>
+            <CardDescription>Broadcast a message to all employees</CardDescription>
           </CardHeader>
-
           <CardContent className="space-y-4">
             <Textarea
               value={announcement}
               onChange={e => setAnnouncement(e.target.value)}
               placeholder="Type your announcement here..."
             />
-
             <Button onClick={handleSendAnnouncement} disabled={isSending}>
               <Send className="h-4 w-4 mr-2" />
               {isSending ? 'Sending...' : 'Send'}
             </Button>
 
-            {latestAnnouncement && (
-              <div className="p-3 bg-muted/50 rounded-lg flex justify-between">
+            {announcements.map(a => (
+              <div key={a.id} className="flex justify-between items-start p-3 bg-muted/50 rounded-lg">
                 <div>
-                  <p className="text-sm">{latestAnnouncement.body}</p>
+                  <p className="text-sm">{a.body}</p>
                   <p className="text-xs text-muted-foreground">
-                    {latestAnnouncement.created_at &&
-                      format(new Date(latestAnnouncement.created_at), 'PPp')}
+                    {a.created_at && format(new Date(a.created_at), 'PPp')}
                   </p>
                 </div>
                 <Button
                   size="icon"
-                  variant="destructive"
-                  onClick={handleDeleteAnnouncement}
+                  variant="ghost"
+                  onClick={() => handleDeleteAnnouncement(a.id)}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-4 w-4 text-red-500" />
                 </Button>
               </div>
-            )}
+            ))}
           </CardContent>
         </Card>
 
@@ -296,10 +249,16 @@ const AdminDashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {menuItems.map(item => (
             <Link key={item.label} to={item.href}>
-              <Card className="hover:bg-accent/50">
-                <CardContent className="p-4 flex items-center justify-between">
-                  <span>{item.label}</span>
-                  <ChevronRight />
+              <Card className="cursor-pointer hover:bg-accent/50 transition-colors">
+                <CardContent className="p-4 flex items-center gap-4">
+                  <div className={`p-2.5 rounded-xl bg-background ${item.color}`}>
+                    <item.icon className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium">{item.label}</p>
+                    <p className="text-xs text-muted-foreground">{item.description}</p>
+                  </div>
+                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
                 </CardContent>
               </Card>
             </Link>

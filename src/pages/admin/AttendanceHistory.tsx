@@ -1,22 +1,22 @@
-import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
-import Header from '@/components/Header';
+import { useState, useEffect } from "react";
+import { useParams } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import Header from "@/components/Header";
 
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from "@/components/ui/dialog";
 
 import {
   Loader2,
@@ -27,7 +27,7 @@ import {
   XCircle,
   Clock,
   Plane,
-} from 'lucide-react';
+} from "lucide-react";
 
 import {
   format,
@@ -37,7 +37,7 @@ import {
   isSameMonth,
   addMonths,
   subMonths,
-} from 'date-fns';
+} from "date-fns";
 
 /* ===================== TYPES ===================== */
 
@@ -55,6 +55,7 @@ interface LeaveRecord {
 /* ===================== COMPONENT ===================== */
 
 const AdminAttendanceHistory = () => {
+  // ✅ MUST MATCH ROUTE PARAM NAME
   const { userId } = useParams<{ userId: string }>();
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -72,116 +73,125 @@ const AdminAttendanceHistory = () => {
 
   /* ===================== FETCH ===================== */
 
-  const fetchData = async () => {
-    if (!userId) return;
-
-    setIsLoading(true);
-
-    const start = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
-    const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
-
-    const { data: attData } = await supabase
-      .from('attendance')
-      .select('day, checkin_at, checkout_at')
-      .eq('emp_user_id', userId)
-      .gte('day', start)
-      .lte('day', end);
-
-    const { data: leaveData } = await supabase
-      .from('leaves')
-      .select('start_date, end_date')
-      .eq('emp_user_id', userId)
-      .eq('status', 'approved');
-
-    const attendanceRows = attData ?? [];
-    const leaveRows = leaveData ?? [];
-
-    setAttendance(attendanceRows);
-    setLeaves(leaveRows);
-
-    /* ===================== SUMMARY (NO FUTURE DAYS) ===================== */
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const validDays = eachDayOfInterval({
-      start: startOfMonth(currentMonth),
-      end: today < endOfMonth(currentMonth) ? today : endOfMonth(currentMonth),
-    });
-
-    let present = 0;
-    let half = 0;
-    let leave = 0;
-    let absent = 0;
-
-    validDays.forEach(date => {
-      const dateStr = format(date, 'yyyy-MM-dd');
-
-      const onLeave = leaveRows.some(
-        l => dateStr >= l.start_date && dateStr <= l.end_date
-      );
-
-      if (onLeave) {
-        leave++;
-        return;
-      }
-
-      const rec = attendanceRows.find(a => a.day === dateStr);
-
-      if (rec?.checkout_at) present++;
-      else if (rec?.checkin_at) half++;
-      else absent++;
-    });
-
-    setSummary({ present, half, leave, absent });
-    setIsLoading(false);
-  };
-
   useEffect(() => {
+    if (!userId) {
+      setIsLoading(false);
+      return;
+    }
+
+    const fetchData = async () => {
+      setIsLoading(true);
+
+      const start = format(startOfMonth(currentMonth), "yyyy-MM-dd");
+      const end = format(endOfMonth(currentMonth), "yyyy-MM-dd");
+
+      const [{ data: attData }, { data: leaveData }] = await Promise.all([
+        supabase
+          .from("attendance")
+          .select("day, checkin_at, checkout_at")
+          .eq("emp_user_id", userId)
+          .gte("day", start)
+          .lte("day", end),
+
+        supabase
+          .from("leaves")
+          .select("start_date, end_date")
+          .eq("emp_user_id", userId)
+          .eq("status", "approved"),
+      ]);
+
+      const attendanceRows = attData ?? [];
+      const leaveRows = leaveData ?? [];
+
+      setAttendance(attendanceRows);
+      setLeaves(leaveRows);
+
+      /* ===== SUMMARY (PAST + TODAY ONLY) ===== */
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const validDays = eachDayOfInterval({
+        start: startOfMonth(currentMonth),
+        end: today < endOfMonth(currentMonth) ? today : endOfMonth(currentMonth),
+      });
+
+      let present = 0;
+      let half = 0;
+      let leave = 0;
+      let absent = 0;
+
+      validDays.forEach((d) => {
+        const dateStr = format(d, "yyyy-MM-dd");
+
+        const isLeave = leaveRows.some(
+          (l) => dateStr >= l.start_date && dateStr <= l.end_date
+        );
+
+        if (isLeave) {
+          leave++;
+          return;
+        }
+
+        const rec = attendanceRows.find((a) => a.day === dateStr);
+
+        if (rec?.checkout_at) present++;
+        else if (rec?.checkin_at) half++;
+        else absent++;
+      });
+
+      setSummary({ present, half, leave, absent });
+      setIsLoading(false);
+    };
+
     fetchData();
   }, [userId, currentMonth]);
 
   /* ===================== HELPERS ===================== */
 
   const isLeaveDay = (dateStr: string) =>
-    leaves.some(l => dateStr >= l.start_date && dateStr <= l.end_date);
+    leaves.some((l) => dateStr >= l.start_date && dateStr <= l.end_date);
 
   const getDayStatus = (date: Date) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // ✅ FUTURE DAYS → NOT MARKED
-    if (date > today) return 'future';
+    if (date > today) return "future";
 
-    const dateStr = format(date, 'yyyy-MM-dd');
+    const dateStr = format(date, "yyyy-MM-dd");
 
-    if (isLeaveDay(dateStr)) return 'leave';
+    if (isLeaveDay(dateStr)) return "leave";
 
-    const record = attendance.find(a => a.day === dateStr);
-    if (record?.checkout_at) return 'present';
-    if (record?.checkin_at) return 'half';
+    const rec = attendance.find((a) => a.day === dateStr);
+    if (rec?.checkout_at) return "present";
+    if (rec?.checkin_at) return "half";
 
-    return 'absent';
+    return "absent";
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'present': return 'bg-green-500';
-      case 'half': return 'bg-yellow-500';
-      case 'leave': return 'bg-blue-500';
-      case 'absent': return 'bg-red-400';
-      default: return 'bg-gray-200'; // future / neutral
+      case "present":
+        return "bg-green-500";
+      case "half":
+        return "bg-yellow-500";
+      case "leave":
+        return "bg-blue-500";
+      case "absent":
+        return "bg-red-400";
+      default:
+        return "bg-gray-300"; // future days
     }
   };
 
-  const selectedAttendance = attendance.find(a => a.day === selectedDate);
+  const selectedAttendance = attendance.find((a) => a.day === selectedDate);
 
   const daysInMonth = eachDayOfInterval({
     start: startOfMonth(currentMonth),
     end: endOfMonth(currentMonth),
   });
 
-  const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const firstDayOffset = startOfMonth(currentMonth).getDay();
 
   /* ===================== UI ===================== */
@@ -207,7 +217,7 @@ const AdminAttendanceHistory = () => {
               <ChevronLeft />
             </Button>
 
-            <h2 className="font-semibold">{format(currentMonth, 'MMMM yyyy')}</h2>
+            <h2 className="font-semibold">{format(currentMonth, "MMMM yyyy")}</h2>
 
             <Button
               size="icon"
@@ -238,26 +248,30 @@ const AdminAttendanceHistory = () => {
 
           <CardContent className="p-4">
             <div className="grid grid-cols-7 gap-1 mb-2">
-              {weekDays.map(d => (
-                <div key={d} className="text-xs text-center text-muted-foreground">{d}</div>
+              {weekDays.map((d) => (
+                <div key={d} className="text-xs text-center text-muted-foreground">
+                  {d}
+                </div>
               ))}
             </div>
 
             <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: firstDayOffset }).map((_, i) => <div key={i} />)}
+              {Array.from({ length: firstDayOffset }).map((_, i) => (
+                <div key={i} />
+              ))}
 
-              {daysInMonth.map(date => {
-                const dateStr = format(date, 'yyyy-MM-dd');
+              {daysInMonth.map((date) => {
+                const dateStr = format(date, "yyyy-MM-dd");
                 const status = getDayStatus(date);
 
                 return (
                   <button
                     key={dateStr}
-                    onClick={() => status !== 'future' && setSelectedDate(dateStr)}
-                    disabled={status === 'future'}
+                    disabled={status === "future"}
+                    onClick={() => status !== "future" && setSelectedDate(dateStr)}
                     className="aspect-square flex flex-col items-center justify-center rounded hover:bg-muted disabled:opacity-40"
                   >
-                    <span className="text-xs">{format(date, 'd')}</span>
+                    <span className="text-xs">{format(date, "d")}</span>
                     <div className={`w-3 h-3 rounded-full ${getStatusColor(status)}`} />
                   </button>
                 );
@@ -271,17 +285,26 @@ const AdminAttendanceHistory = () => {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>
-                {selectedDate && format(new Date(selectedDate), 'PPP')}
+                {selectedDate && format(new Date(selectedDate), "PPP")}
               </DialogTitle>
             </DialogHeader>
 
             <div className="space-y-2 text-sm">
-              <p><strong>Check In:</strong> {selectedAttendance?.checkin_at ? format(new Date(selectedAttendance.checkin_at), 'hh:mm a') : '-'}</p>
-              <p><strong>Check Out:</strong> {selectedAttendance?.checkout_at ? format(new Date(selectedAttendance.checkout_at), 'hh:mm a') : '-'}</p>
+              <p>
+                <strong>Check In:</strong>{" "}
+                {selectedAttendance?.checkin_at
+                  ? format(new Date(selectedAttendance.checkin_at), "hh:mm a")
+                  : "-"}
+              </p>
+              <p>
+                <strong>Check Out:</strong>{" "}
+                {selectedAttendance?.checkout_at
+                  ? format(new Date(selectedAttendance.checkout_at), "hh:mm a")
+                  : "-"}
+              </p>
             </div>
           </DialogContent>
         </Dialog>
-
       </main>
     </div>
   );

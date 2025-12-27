@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import Header from '@/components/Header';
@@ -42,7 +42,7 @@ import {
 /* ===================== TYPES ===================== */
 
 interface AttendanceRecord {
-  day: string;
+  day: string; // yyyy-MM-dd
   checkin_at: string | null;
   checkout_at: string | null;
 }
@@ -61,7 +61,6 @@ const AttendanceHistory = () => {
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const [summary, setSummary] = useState({
@@ -76,66 +75,72 @@ const AttendanceHistory = () => {
   const fetchData = async () => {
     if (!user) return;
 
-    try {
-      setIsLoading(true);
+    setIsLoading(true);
 
-      const start = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
-      const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
+    const start = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
+    const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
 
-      const { data: attData } = await supabase
-        .from('attendance')
-        .select('day, checkin_at, checkout_at')
-        .eq('emp_user_id', user.id)
-        .gte('day', start)
-        .lte('day', end);
+    const { data: attData, error: attErr } = await supabase
+      .from('attendance')
+      .select('day, checkin_at, checkout_at')
+      .eq('emp_user_id', user.id)
+      .gte('day', start)
+      .lte('day', end);
 
-      const { data: leaveData } = await supabase
-        .from('leaves')
-        .select('start_date, end_date')
-        .eq('emp_user_id', user.id)
-        .eq('status', 'approved');
+    const { data: leaveData, error: leaveErr } = await supabase
+      .from('leaves')
+      .select('start_date, end_date')
+      .eq('emp_user_id', user.id)
+      .eq('status', 'approved');
 
-      setAttendance(attData || []);
-      setLeaves(leaveData || []);
-
-      /* ===================== SUMMARY ===================== */
-
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const validDays = eachDayOfInterval({
-        start: startOfMonth(currentMonth),
-        end: today < endOfMonth(currentMonth) ? today : endOfMonth(currentMonth),
-      });
-
-      let present = 0;
-      let half = 0;
-      let leave = 0;
-      let absent = 0;
-
-      validDays.forEach(day => {
-        const dateStr = format(day, 'yyyy-MM-dd');
-
-        const isLeave = leaveData?.some(
-          l => dateStr >= l.start_date && dateStr <= l.end_date
-        );
-
-        if (isLeave) {
-          leave++;
-          return;
-        }
-
-        const record = attData?.find(a => a.day === dateStr);
-
-        if (record?.checkout_at) present++;
-        else if (record?.checkin_at) half++;
-        else absent++;
-      });
-
-      setSummary({ present, half, leave, absent });
-    } finally {
+    if (attErr || leaveErr) {
+      console.error('Attendance fetch error:', attErr || leaveErr);
       setIsLoading(false);
+      return;
     }
+
+    const attRows = attData ?? [];
+    const leaveRows = leaveData ?? [];
+
+    setAttendance(attRows);
+    setLeaves(leaveRows);
+
+    /* ===================== SUMMARY ===================== */
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const validDays = eachDayOfInterval({
+      start: startOfMonth(currentMonth),
+      end: today < endOfMonth(currentMonth) ? today : endOfMonth(currentMonth),
+    });
+
+    let present = 0;
+    let half = 0;
+    let leave = 0;
+    let absent = 0;
+
+    validDays.forEach(date => {
+      const dateStr = format(date, 'yyyy-MM-dd');
+
+      const onLeave = leaveRows.some(
+        l => dateStr >= l.start_date && dateStr <= l.end_date
+      );
+
+      if (onLeave) {
+        leave++;
+        return;
+      }
+
+      const rec = attRows.find(a => a.day === dateStr);
+
+      if (rec?.checkout_at) present++;
+      else if (rec?.checkin_at) half++;
+      else absent++;
+    });
+
+    setSummary({ present, half, leave, absent });
+    setIsLoading(false);
   };
 
   useEffect(() => {
@@ -155,9 +160,9 @@ const AttendanceHistory = () => {
     if (date > today) return 'future';
     if (isLeaveDay(dateStr)) return 'leave';
 
-    const record = attendance.find(a => a.day === dateStr);
-    if (record?.checkout_at) return 'present';
-    if (record?.checkin_at) return 'half';
+    const rec = attendance.find(a => a.day === dateStr);
+    if (rec?.checkout_at) return 'present';
+    if (rec?.checkin_at) return 'half';
 
     return 'absent';
   };
@@ -216,15 +221,15 @@ const AttendanceHistory = () => {
         {/* MONTH NAV */}
         <Card>
           <CardContent className="p-4 flex items-center justify-between">
-            <Button variant="ghost" size="icon" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>
+            <Button size="icon" variant="ghost" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>
               <ChevronLeft />
             </Button>
 
             <h2 className="font-semibold">{format(currentMonth, 'MMMM yyyy')}</h2>
 
             <Button
-              variant="ghost"
               size="icon"
+              variant="ghost"
               onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
               disabled={isSameMonth(currentMonth, new Date())}
             >
@@ -259,13 +264,11 @@ const AttendanceHistory = () => {
             </div>
 
             <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: firstDayOffset }).map((_, i) => (
-                <div key={i} />
-              ))}
+              {Array.from({ length: firstDayOffset }).map((_, i) => <div key={i} />)}
 
               {daysInMonth.map(date => {
-                const status = getDayStatus(date);
                 const dateStr = format(date, 'yyyy-MM-dd');
+                const status = getDayStatus(date);
 
                 return (
                   <button
@@ -293,18 +296,8 @@ const AttendanceHistory = () => {
 
             <div className="space-y-2 text-sm">
               <p><strong>Status:</strong> {selectedStatus}</p>
-              <p>
-                <strong>Check In:</strong>{' '}
-                {selectedAttendance?.checkin_at
-                  ? format(new Date(selectedAttendance.checkin_at), 'hh:mm a')
-                  : '-'}
-              </p>
-              <p>
-                <strong>Check Out:</strong>{' '}
-                {selectedAttendance?.checkout_at
-                  ? format(new Date(selectedAttendance.checkout_at), 'hh:mm a')
-                  : '-'}
-              </p>
+              <p><strong>Check In:</strong> {selectedAttendance?.checkin_at ? format(new Date(selectedAttendance.checkin_at), 'hh:mm a') : '-'}</p>
+              <p><strong>Check Out:</strong> {selectedAttendance?.checkout_at ? format(new Date(selectedAttendance.checkout_at), 'hh:mm a') : '-'}</p>
             </div>
           </DialogContent>
         </Dialog>

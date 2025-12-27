@@ -55,7 +55,7 @@ interface LeaveRecord {
 /* ===================== COMPONENT ===================== */
 
 const AdminAttendanceHistory = () => {
-  const { employeeId } = useParams<{ employeeId: string }>();
+  const { userId } = useParams<{ userId: string }>();
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
@@ -73,7 +73,7 @@ const AdminAttendanceHistory = () => {
   /* ===================== FETCH ===================== */
 
   const fetchData = async () => {
-    if (!employeeId) return;
+    if (!userId) return;
 
     setIsLoading(true);
 
@@ -83,23 +83,23 @@ const AdminAttendanceHistory = () => {
     const { data: attData } = await supabase
       .from('attendance')
       .select('day, checkin_at, checkout_at')
-      .eq('emp_user_id', employeeId)
+      .eq('emp_user_id', userId)
       .gte('day', start)
       .lte('day', end);
 
     const { data: leaveData } = await supabase
       .from('leaves')
       .select('start_date, end_date')
-      .eq('emp_user_id', employeeId)
+      .eq('emp_user_id', userId)
       .eq('status', 'approved');
 
-    const attendanceRows = attData || [];
-    const leaveRows = leaveData || [];
+    const attendanceRows = attData ?? [];
+    const leaveRows = leaveData ?? [];
 
     setAttendance(attendanceRows);
     setLeaves(leaveRows);
 
-    /* ===================== SUMMARY (SAME AS EMPLOYEE) ===================== */
+    /* ===================== SUMMARY (NO FUTURE DAYS) ===================== */
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -114,22 +114,22 @@ const AdminAttendanceHistory = () => {
     let leave = 0;
     let absent = 0;
 
-    validDays.forEach(day => {
-      const dateStr = format(day, 'yyyy-MM-dd');
+    validDays.forEach(date => {
+      const dateStr = format(date, 'yyyy-MM-dd');
 
-      const isLeave = leaveRows.some(
+      const onLeave = leaveRows.some(
         l => dateStr >= l.start_date && dateStr <= l.end_date
       );
 
-      if (isLeave) {
+      if (onLeave) {
         leave++;
         return;
       }
 
-      const record = attendanceRows.find(a => a.day === dateStr);
+      const rec = attendanceRows.find(a => a.day === dateStr);
 
-      if (record?.checkout_at) present++;
-      else if (record?.checkin_at) half++;
+      if (rec?.checkout_at) present++;
+      else if (rec?.checkin_at) half++;
       else absent++;
     });
 
@@ -139,7 +139,7 @@ const AdminAttendanceHistory = () => {
 
   useEffect(() => {
     fetchData();
-  }, [employeeId, currentMonth]);
+  }, [userId, currentMonth]);
 
   /* ===================== HELPERS ===================== */
 
@@ -147,6 +147,12 @@ const AdminAttendanceHistory = () => {
     leaves.some(l => dateStr >= l.start_date && dateStr <= l.end_date);
 
   const getDayStatus = (date: Date) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // ✅ FUTURE DAYS → NOT MARKED
+    if (date > today) return 'future';
+
     const dateStr = format(date, 'yyyy-MM-dd');
 
     if (isLeaveDay(dateStr)) return 'leave';
@@ -164,7 +170,7 @@ const AdminAttendanceHistory = () => {
       case 'half': return 'bg-yellow-500';
       case 'leave': return 'bg-blue-500';
       case 'absent': return 'bg-red-400';
-      default: return 'bg-gray-200';
+      default: return 'bg-gray-200'; // future / neutral
     }
   };
 
@@ -247,8 +253,9 @@ const AdminAttendanceHistory = () => {
                 return (
                   <button
                     key={dateStr}
-                    onClick={() => setSelectedDate(dateStr)}
-                    className="aspect-square flex flex-col items-center justify-center rounded hover:bg-muted"
+                    onClick={() => status !== 'future' && setSelectedDate(dateStr)}
+                    disabled={status === 'future'}
+                    className="aspect-square flex flex-col items-center justify-center rounded hover:bg-muted disabled:opacity-40"
                   >
                     <span className="text-xs">{format(date, 'd')}</span>
                     <div className={`w-3 h-3 rounded-full ${getStatusColor(status)}`} />
@@ -263,7 +270,9 @@ const AdminAttendanceHistory = () => {
         <Dialog open={!!selectedDate} onOpenChange={() => setSelectedDate(null)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>{selectedDate && format(new Date(selectedDate), 'PPP')}</DialogTitle>
+              <DialogTitle>
+                {selectedDate && format(new Date(selectedDate), 'PPP')}
+              </DialogTitle>
             </DialogHeader>
 
             <div className="space-y-2 text-sm">
@@ -277,6 +286,8 @@ const AdminAttendanceHistory = () => {
     </div>
   );
 };
+
+/* ===================== SUMMARY CARD ===================== */
 
 const Summary = ({ icon, label, value }: any) => (
   <Card>

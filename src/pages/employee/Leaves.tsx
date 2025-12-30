@@ -1,98 +1,101 @@
-import { useEffect, useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import Header from "@/components/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Calendar, Clock, CheckCircle, XCircle } from "lucide-react";
-import { format } from "date-fns";
-import { Database } from "@/integrations/supabase/types";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/hooks/use-toast";
+import { Calendar } from "lucide-react";
 
-type LeaveStatus = Database["public"]["Enums"]["leave_status"];
-
-interface LeaveRequest {
-  id: string;
-  start_date: string;
-  end_date: string;
-  status: LeaveStatus | null;
-}
+/* ===================== COMPONENT ===================== */
 
 const EmployeeLeaves = () => {
   const { user } = useAuth();
-  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
-  const [monthlyCount, setMonthlyCount] = useState(0);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [reason, setReason] = useState("");
+  const [usedLeaves, setUsedLeaves] = useState(0);
 
   useEffect(() => {
+    fetchLeaveCount();
+  }, []);
+
+  /* ===================== FETCH COUNT ===================== */
+
+  const fetchLeaveCount = async () => {
     if (!user) return;
-    fetchLeaves();
-  }, [user]);
-
-  const fetchLeaves = async () => {
-    const { data } = await supabase
-      .from("leaves")
-      .select("id, start_date, end_date, status")
-      .eq("emp_user_id", user!.id)
-      .order("created_at", { ascending: false });
-
-    setLeaves(data || []);
 
     const monthStart = new Date().toISOString().slice(0, 7) + "-01";
 
     const { count } = await supabase
       .from("leaves")
       .select("*", { count: "exact", head: true })
-      .eq("emp_user_id", user!.id)
+      .eq("emp_user_id", user.id)
       .eq("status", "approved")
       .gte("start_date", monthStart);
 
-    setMonthlyCount(count || 0);
+    setUsedLeaves(count || 0);
   };
 
-  const badge = (status: LeaveStatus | null) => {
-    if (status === "approved")
-      return <Badge className="bg-green-500"><CheckCircle className="h-3 w-3 mr-1"/>Approved</Badge>;
-    if (status === "rejected")
-      return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1"/>Rejected</Badge>;
-    return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1"/>Pending</Badge>;
+  /* ===================== APPLY ===================== */
+
+  const applyLeave = async () => {
+    if (!startDate || !endDate) {
+      toast({ title: "Select dates", variant: "destructive" });
+      return;
+    }
+
+    await supabase.from("leaves").insert({
+      emp_user_id: user!.id,
+      start_date: startDate,
+      end_date: endDate,
+      days: 1,
+      reason,
+      status: "pending",
+    });
+
+    toast({ title: "Leave applied successfully" });
+    setReason("");
+    setStartDate("");
+    setEndDate("");
+    fetchLeaveCount();
   };
+
+  /* ===================== UI ===================== */
 
   return (
     <div className="min-h-screen bg-background">
-      <Header title="My Leaves" backTo="/employee/dashboard" />
+      <Header title="Apply Leave" backTo="/employee/dashboard" />
 
-      <main className="p-4 max-w-2xl mx-auto space-y-4">
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-sm text-muted-foreground">Leaves Used This Month</p>
-            <p className="text-2xl font-bold">{monthlyCount} / 2</p>
-            {monthlyCount > 2 && (
-              <p className="text-sm text-red-600 mt-1">
-                Leaves beyond 2 are unpaid
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
+      <main className="p-4 max-w-lg mx-auto space-y-4">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Calendar className="h-5 w-5" />
-              Leave History
+              Leave Request
             </CardTitle>
           </CardHeader>
 
           <CardContent className="space-y-3">
-            {leaves.map(l => (
-              <div key={l.id} className="p-3 bg-muted/50 rounded-lg flex justify-between">
-                <div>
-                  <p className="font-medium">
-                    {format(new Date(l.start_date), "PPP")} →{" "}
-                    {format(new Date(l.end_date), "PPP")}
-                  </p>
-                </div>
-                {badge(l.status)}
-              </div>
-            ))}
+            <p className="text-sm">
+              Paid leaves remaining this month:{" "}
+              <strong>{Math.max(0, 2 - usedLeaves)}</strong>
+            </p>
+
+            <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+
+            <Textarea
+              placeholder="Reason (optional)"
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+            />
+
+            <Button onClick={applyLeave} className="w-full">
+              Submit Leave
+            </Button>
           </CardContent>
         </Card>
       </main>

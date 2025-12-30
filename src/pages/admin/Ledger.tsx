@@ -115,7 +115,7 @@ const AdminLedger = () => {
           table: 'money_ledger',
           filter: `emp_user_id=eq.${selectedEmployee}`,
         },
-        () => fetchLedger()
+        () => {fetchLedger()}
       )
       .subscribe();
 

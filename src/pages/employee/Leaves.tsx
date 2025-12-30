@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import Header from "@/components/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,82 +7,64 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { toast } from "@/hooks/use-toast";
+import { AlertTriangle, CalendarDays } from "lucide-react";
 import { format, differenceInCalendarDays } from "date-fns";
 import { DateRange } from "react-day-picker";
-import { AlertTriangle, CalendarDays } from "lucide-react";
-import { Database } from "@/integrations/supabase/types";
-
-/* ===================== TYPES ===================== */
-
-type LeaveStatus = Database["public"]["Enums"]["leave_status"];
-
-interface LeaveRecord {
-  id: string;
-  start_date: string;
-  end_date: string;
-  status: LeaveStatus | null;
-  reason: string | null;
-}
+import { useAuth } from "@/contexts/AuthContext";
 
 /* ===================== COMPONENT ===================== */
 
 const EmployeeLeaves = () => {
-  const [range, setRange] = useState<DateRange | undefined>();
+  const { user } = useAuth();
+
+  const [range, setRange] = useState<DateRange | undefined>(undefined);
   const [reason, setReason] = useState("");
-  const [history, setHistory] = useState<LeaveRecord[]>([]);
-  const [approvedCount, setApprovedCount] = useState(0);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [remainingPaid, setRemainingPaid] = useState(2);
+  const [submitting, setSubmitting] = useState(false);
 
-  /* ===================== FETCH ===================== */
-
-  const fetchData = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const monthStart = format(new Date(), "yyyy-MM-01");
-
-    const { data: approved } = await supabase
-      .from("leaves")
-      .select("id")
-      .eq("emp_user_id", user.id)
-      .eq("status", "approved")
-      .gte("start_date", monthStart);
-
-    setApprovedCount(approved?.length || 0);
-
-    const { data: historyData } = await supabase
-      .from("leaves")
-      .select("*")
-      .eq("emp_user_id", user.id)
-      .order("created_at", { ascending: false });
-
-    setHistory(historyData || []);
-  };
+  /* ===================== FETCH PAID LEAVES ===================== */
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (!user) return;
 
-  /* ===================== DERIVED ===================== */
+    const fetchPaidLeaves = async () => {
+      const monthStart = format(new Date(), "yyyy-MM-01");
+      const nextMonth = new Date(monthStart);
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+
+      const { count } = await supabase
+        .from("leaves")
+        .select("*", { count: "exact", head: true })
+        .eq("emp_user_id", user.id)
+        .eq("status", "approved")
+        .gte("start_date", monthStart)
+        .lt("start_date", format(nextMonth, "yyyy-MM-dd"));
+
+      const used = count || 0;
+      setRemainingPaid(Math.max(2 - used, 0));
+    };
+
+    fetchPaidLeaves();
+  }, [user]);
+
+  /* ===================== CALCULATIONS ===================== */
 
   const selectedDays =
     range?.from && range?.to
       ? differenceInCalendarDays(range.to, range.from) + 1
       : 0;
 
-  const unpaidDays = Math.max(0, approvedCount + selectedDays - 2);
+  const unpaidDays = Math.max(selectedDays - remainingPaid, 0);
 
   /* ===================== SUBMIT ===================== */
 
   const handleSubmit = async () => {
-    if (!range?.from || !range?.to) {
-      toast({ title: "Select leave dates", variant: "destructive" });
+    if (!user || !range?.from || !range?.to) {
+      toast({ title: "Please select leave dates", variant: "destructive" });
       return;
     }
 
-    setIsSubmitting(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    setSubmitting(true);
 
     try {
       await supabase.from("leaves").insert({
@@ -97,7 +79,6 @@ const EmployeeLeaves = () => {
       toast({ title: "Leave request submitted" });
       setRange(undefined);
       setReason("");
-      fetchData();
     } catch (err: any) {
       toast({
         title: "Error",
@@ -105,7 +86,7 @@ const EmployeeLeaves = () => {
         variant: "destructive",
       });
     } finally {
-      setIsSubmitting(false);
+      setSubmitting(false);
     }
   };
 
@@ -115,14 +96,34 @@ const EmployeeLeaves = () => {
     <div className="min-h-screen bg-background">
       <Header title="Leave Requests" backTo="/employee/dashboard" />
 
-      <main className="p-4 max-w-xl mx-auto space-y-4">
+      <main className="p-4 max-w-xl mx-auto space-y-5">
 
-        {/* 🔴 POLICY WARNING */}
-        <Card className="border-red-500 bg-red-50">
-          <CardContent className="p-3 flex gap-2 text-sm text-red-700">
+        {/* INFO CARD */}
+        <Card className="border-red-200">
+          <CardContent className="p-4 flex items-center justify-between">
+            <span className="text-sm font-medium">
+              Paid leaves remaining this month
+            </span>
+            <Badge
+              className={
+                remainingPaid === 0
+                  ? "bg-red-500"
+                  : "bg-red-500/90"
+              }
+            >
+              {remainingPaid}
+            </Badge>
+          </CardContent>
+        </Card>
+
+        {/* WARNING */}
+        <Card className="bg-red-50 border-red-200">
+          <CardContent className="p-4 flex gap-3 text-sm text-red-700">
             <AlertTriangle className="h-5 w-5 mt-0.5" />
-            Only <strong>2 paid leaves</strong> are allowed per month.  
-            Extra days will be treated as <strong>unpaid leave</strong>.
+            <p>
+              Only <strong>2 paid leaves</strong> are allowed per month.
+              Any additional days will be treated as <strong>unpaid leave</strong>.
+            </p>
           </CardContent>
         </Card>
 
@@ -130,22 +131,14 @@ const EmployeeLeaves = () => {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <CalendarDays className="h-5 w-5" />
+              <CalendarDays className="h-5 w-5 text-red-500" />
               Apply for Leave
             </CardTitle>
           </CardHeader>
 
           <CardContent className="space-y-4">
 
-            {/* PAID COUNT */}
-            <div className="flex justify-between items-center">
-              <span className="text-sm">Paid leaves remaining</span>
-              <Badge variant={approvedCount >= 2 ? "destructive" : "default"}>
-                {Math.max(0, 2 - approvedCount)}
-              </Badge>
-            </div>
-
-            {/* SINGLE CALENDAR (RANGE) */}
+            {/* SINGLE RANGE CALENDAR */}
             <Calendar
               mode="range"
               selected={range}
@@ -153,72 +146,35 @@ const EmployeeLeaves = () => {
               className="rounded-md border"
             />
 
-            {/* COUNT SUMMARY */}
+            {/* SUMMARY */}
             {selectedDays > 0 && (
               <div className="text-sm space-y-1">
-                <p>Selected days: <strong>{selectedDays}</strong></p>
+                <p>
+                  Selected days: <strong>{selectedDays}</strong>
+                </p>
                 {unpaidDays > 0 && (
-                  <p className="text-red-600">
-                    {unpaidDays} day(s) will be unpaid
+                  <p className="text-red-600 font-medium">
+                    {unpaidDays} day(s) will be unpaid as per company policy
                   </p>
                 )}
               </div>
             )}
 
+            {/* REASON */}
             <Textarea
-              placeholder="Reason (optional)"
+              placeholder="Reason for leave (optional)"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
+              rows={3}
             />
 
             <Button
               className="w-full bg-red-600 hover:bg-red-700"
               onClick={handleSubmit}
-              disabled={isSubmitting}
+              disabled={submitting}
             >
               Submit Leave Request
             </Button>
-          </CardContent>
-        </Card>
-
-        {/* HISTORY */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Leave History</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {history.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center">
-                No leave records
-              </p>
-            )}
-
-            {history.map(l => (
-              <div key={l.id} className="p-3 bg-muted/50 rounded">
-                <div className="flex justify-between">
-                  <span className="text-sm">
-                    {format(new Date(l.start_date), "PPP")} →{" "}
-                    {format(new Date(l.end_date), "PPP")}
-                  </span>
-                  <Badge
-                    variant={
-                      l.status === "approved"
-                        ? "default"
-                        : l.status === "rejected"
-                        ? "destructive"
-                        : "secondary"
-                    }
-                  >
-                    {l.status}
-                  </Badge>
-                </div>
-                {l.reason && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {l.reason}
-                  </p>
-                )}
-              </div>
-            ))}
           </CardContent>
         </Card>
 

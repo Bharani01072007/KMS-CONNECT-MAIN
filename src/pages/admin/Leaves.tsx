@@ -48,24 +48,21 @@ const AdminLeaves = () => {
   useEffect(() => {
     fetchLeaves();
 
-    /* 🔥 REALTIME LISTENER */
     realtimeRef.current = supabase
       .channel("admin-leaves-realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "leaves" },
-        () => fetchLeaves()
+        fetchLeaves
       )
       .subscribe();
 
     return () => {
-      if (realtimeRef.current) {
-        supabase.removeChannel(realtimeRef.current);
-      }
+      if (realtimeRef.current) supabase.removeChannel(realtimeRef.current);
     };
   }, []);
 
-  /* ===================== FETCH LEAVES ===================== */
+  /* ===================== FETCH ===================== */
 
   const fetchLeaves = async () => {
     const { data } = await supabase
@@ -87,7 +84,7 @@ const AdminLeaves = () => {
       .select("user_id, daily_wage")
       .in("user_id", userIds);
 
-    const enriched: LeaveRequest[] = data.map(leave => ({
+    const enriched = data.map(leave => ({
       ...leave,
       employee: profiles?.find(p => p.auth_uid === leave.emp_user_id) || null,
       daily_wage: wages?.find(w => w.user_id === leave.emp_user_id)?.daily_wage || 0,
@@ -97,7 +94,7 @@ const AdminLeaves = () => {
     calculateLeaveCounts(enriched);
   };
 
-  /* ===================== LEAVE COUNT ===================== */
+  /* ===================== COUNT ===================== */
 
   const getApprovedLeavesThisMonth = async (empUserId: string, monthStart: string) => {
     const nextMonth = new Date(monthStart);
@@ -116,47 +113,39 @@ const AdminLeaves = () => {
 
   const calculateLeaveCounts = async (list: LeaveRequest[]) => {
     const counts: Record<string, number> = {};
-
     for (const leave of list) {
       const monthStart = leave.start_date.slice(0, 7) + "-01";
-      const approvedCount = await getApprovedLeavesThisMonth(
-        leave.emp_user_id,
-        monthStart
-      );
-      counts[leave.id] = approvedCount + 1;
+      const approved = await getApprovedLeavesThisMonth(leave.emp_user_id, monthStart);
+      counts[leave.id] = approved + 1;
     }
-
     setLeaveCounts(counts);
-  };
-
-  /* ===================== NOTIFICATIONS ===================== */
-
-  const sendLeaveNotification = async (userId: string, title: string, body: string) => {
-    await supabase.from("notifications").insert({
-      user_id: userId,
-      title,
-      body,
-    });
   };
 
   /* ===================== APPROVE ===================== */
 
-  const approveLeave = async (id: string) => {
-    setIsUpdating(id);
+  const approveLeave = async (leave: LeaveRequest) => {
+    setIsUpdating(leave.id);
 
     try {
-      await supabase.from("leaves").update({ status: "approved" }).eq("id", id);
+      const monthStart = leave.start_date.slice(0, 7) + "-01";
 
-      const leave = pendingLeave || leaves.find(l => l.id === id);
-      if (leave) {
-        await sendLeaveNotification(
-          leave.emp_user_id,
-          "Leave Approved",
-          `Your leave from ${format(new Date(leave.start_date), "PPP")} has been approved.`
-        );
+      await supabase.from("leaves")
+        .update({ status: "approved" })
+        .eq("id", leave.id);
+
+      // 🔴 UNPAID LEAVE (3rd onwards)
+      if (leaveCounts[leave.id] > 2 && leave.daily_wage) {
+        await supabase.from("money_ledger").insert({
+          emp_user_id: leave.emp_user_id,
+          amount: leave.daily_wage,
+          type: "debit",
+          reason: "Unpaid Leave (More than 2 leaves)",
+          month_year: monthStart,
+        });
       }
 
       toast({ title: "Leave Approved" });
+      fetchLeaves();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
@@ -168,52 +157,15 @@ const AdminLeaves = () => {
 
   const handleApproveClick = async (leave: LeaveRequest) => {
     const monthStart = leave.start_date.slice(0, 7) + "-01";
-    const approvedCount = await getApprovedLeavesThisMonth(
-      leave.emp_user_id,
-      monthStart
-    );
+    const approved = await getApprovedLeavesThisMonth(leave.emp_user_id, monthStart);
 
-    if (approvedCount >= 3) {
+    if (approved >= 2) {
       setPendingLeave(leave);
       setShowWarning(true);
       return;
     }
 
-    approveLeave(leave.id);
-  };
-
-  /* ===================== REJECT ===================== */
-
-  const handleReject = async (id: string) => {
-    setIsUpdating(id);
-    try {
-      await supabase.from("leaves").update({ status: "rejected" }).eq("id", id);
-
-      const leave = leaves.find(l => l.id === id);
-      if (leave) {
-        await sendLeaveNotification(
-          leave.emp_user_id,
-          "Leave Rejected",
-          "Your leave request has been rejected."
-        );
-      }
-
-      toast({ title: "Leave Rejected" });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    } finally {
-      setIsUpdating(null);
-    }
-  };
-
-  /* ===================== UI HELPERS ===================== */
-
-  const getStatusBadge = (status: LeaveStatus | null) => {
-    if (status === "approved")
-      return <Badge className="bg-green-500"><CheckCircle className="h-3 w-3 mr-1" />Approved</Badge>;
-    if (status === "rejected")
-      return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Rejected</Badge>;
-    return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" />Pending</Badge>;
+    approveLeave(leave);
   };
 
   /* ===================== UI ===================== */
@@ -225,53 +177,54 @@ const AdminLeaves = () => {
       <main className="p-4 max-w-4xl mx-auto space-y-4">
         {leaves.map(leave => (
           <Card key={leave.id}>
-            <CardContent className="p-4">
-              <div className="flex justify-between">
-                <div>
-                  <p className="font-medium flex items-center gap-2">
-                    <User className="h-4 w-4" />
-                    {leave.employee?.full_name || leave.employee?.email}
-                    {getStatusBadge(leave.status)}
-                  </p>
-                  <p className="text-sm">
-                    {format(new Date(leave.start_date), "PPP")} →{" "}
-                    {format(new Date(leave.end_date), "PPP")}
-                  </p>
-                </div>
-
-                {leave.status === "pending" && (
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={() => handleApproveClick(leave)}>
-                      Approve
-                    </Button>
-                    <Button size="sm" variant="destructive" onClick={() => handleReject(leave.id)}>
-                      Reject
-                    </Button>
-                  </div>
-                )}
+            <CardContent className="p-4 flex justify-between">
+              <div>
+                <p className="font-medium flex items-center gap-2">
+                  <User className="h-4 w-4" />
+                  {leave.employee?.full_name || leave.employee?.email}
+                  <Badge>{leaveCounts[leave.id]} leave(s) this month</Badge>
+                </p>
+                <p className="text-sm">
+                  {format(new Date(leave.start_date), "PPP")} →{" "}
+                  {format(new Date(leave.end_date), "PPP")}
+                </p>
               </div>
+
+              {leave.status === "pending" && (
+                <Button size="sm" onClick={() => handleApproveClick(leave)}>
+                  Approve
+                </Button>
+              )}
             </CardContent>
           </Card>
         ))}
       </main>
 
-      {/* ⚠️ SALARY WARNING */}
+      {/* ⚠ WARNING */}
       <Dialog open={showWarning} onOpenChange={setShowWarning}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-destructive">Salary Deduction Warning</DialogTitle>
+            <DialogTitle className="text-destructive">
+              Unpaid Leave Warning
+            </DialogTitle>
             <DialogDescription>
-              This is the <strong>4th leave</strong> this month. Salary deduction:
+              This employee has already used <strong>2 paid leaves</strong> this month.
+              <br />This leave will be <strong>unpaid</strong>.
             </DialogDescription>
           </DialogHeader>
 
           <div className="text-center font-bold text-red-600">
-            ₹{pendingLeave?.daily_wage || 0}
+            ₹{pendingLeave?.daily_wage}
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowWarning(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={() => pendingLeave && approveLeave(pendingLeave.id)}>
+            <Button variant="outline" onClick={() => setShowWarning(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => pendingLeave && approveLeave(pendingLeave)}
+            >
               Confirm & Approve
             </Button>
           </DialogFooter>

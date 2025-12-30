@@ -28,7 +28,7 @@ import {
 
 interface AttendanceRecord {
   day: string;
-  attendance_type: string; // 'full' | 'half'
+  attendance_type: string;
 }
 
 interface LeaveRecord {
@@ -95,14 +95,13 @@ const AttendanceHistory = () => {
       return sum + days.length;
     }, 0);
 
-    const today = new Date();
-    const validDays = eachDayOfInterval({
+    const allDays = eachDayOfInterval({
       start: startOfMonth(currentMonth),
-      end: today < endOfMonth(currentMonth) ? today : endOfMonth(currentMonth),
+      end: endOfMonth(currentMonth),
     });
 
     const absent =
-      validDays.length - fullDays - halfDays - leaveDays;
+      allDays.length - fullDays - halfDays - leaveDays;
 
     setSummary({
       present: fullDays,
@@ -111,71 +110,7 @@ const AttendanceHistory = () => {
       absent: Math.max(0, absent),
     });
 
-    await autoSalaryAdjustments(validDays, attendanceRows, leaveRows);
-
     setIsLoading(false);
-  };
-
-  /* ===================== AUTO SALARY LOGIC ===================== */
-
-  const autoSalaryAdjustments = async (
-    days: Date[],
-    att: AttendanceRecord[],
-    leaves: LeaveRecord[]
-  ) => {
-    if (!user) return;
-
-    const { data: emp } = await supabase
-      .from('employees')
-      .select('daily_wage')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (!emp?.daily_wage) return;
-
-    for (const day of days) {
-      const dateStr = format(day, 'yyyy-MM-dd');
-
-      const isLeave = leaves.some(
-        l => dateStr >= l.start_date && dateStr <= l.end_date
-      );
-      if (isLeave) continue;
-
-      const record = att.find(a => a.day === dateStr);
-
-      let debitAmount = 0;
-      let reason = '';
-
-      if (!record) {
-        debitAmount = emp.daily_wage;
-        reason = `Absence debit for ${dateStr}`;
-      } else if (record.attendance_type === 'half') {
-        debitAmount = emp.daily_wage / 2;
-        reason = `Half-day debit for ${dateStr}`;
-      } else {
-        continue;
-      }
-
-      const monthYear = format(day, 'yyyy-MM-01');
-
-      const { data: exists } = await supabase
-        .from('money_ledger')
-        .select('id')
-        .eq('emp_user_id', user.id)
-        .eq('month_year', monthYear)
-        .eq('reason', reason)
-        .maybeSingle();
-
-      if (exists) continue;
-
-      await supabase.from('money_ledger').insert({
-        emp_user_id: user.id,
-        amount: debitAmount,
-        type: 'debit',
-        reason,
-        month_year: monthYear,
-      });
-    }
   };
 
   /* ===================== REALTIME ===================== */
@@ -190,12 +125,12 @@ const AttendanceHistory = () => {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'attendance' },
-        () => fetchData()
+        fetchData
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'leaves' },
-        () => fetchData()
+        fetchData
       )
       .subscribe();
 
@@ -211,31 +146,24 @@ const AttendanceHistory = () => {
 
   const getDayStatus = (date: Date): string => {
     const dateStr = format(date, 'yyyy-MM-dd');
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
 
-    if (date > today) return 'future';
     if (isDateInLeave(dateStr)) return 'leave';
 
     const att = attendance.find(a => a.day === dateStr);
     if (att?.attendance_type === 'full') return 'present';
     if (att?.attendance_type === 'half') return 'half';
 
+    // 🔴 FUTURE DAYS ALSO ABSENT
     return 'absent';
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'present':
-        return 'bg-green-500';
-      case 'half':
-        return 'bg-yellow-500';
-      case 'leave':
-        return 'bg-blue-500';
-      case 'absent':
-        return 'bg-red-400';
-      default:
-        return 'bg-gray-200 dark:bg-gray-700';
+      case 'present': return 'bg-green-500';
+      case 'half': return 'bg-yellow-500';
+      case 'leave': return 'bg-blue-500';
+      case 'absent': return 'bg-red-400';
+      default: return 'bg-gray-200';
     }
   };
 
@@ -251,11 +179,8 @@ const AttendanceHistory = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex flex-col">
-        <Header title="Attendance History" backTo="/employee/dashboard" />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
@@ -302,22 +227,18 @@ const AttendanceHistory = () => {
           <CardContent className="p-4">
             <div className="grid grid-cols-7 gap-1 mb-2">
               {weekDays.map(d => (
-                <div key={d} className="text-center text-xs font-medium text-muted-foreground">
-                  {d}
-                </div>
+                <div key={d} className="text-xs text-center text-muted-foreground">{d}</div>
               ))}
             </div>
 
             <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: firstDayOffset }).map((_, i) => (
-                <div key={i} />
-              ))}
+              {Array.from({ length: firstDayOffset }).map((_, i) => <div key={i} />)}
 
               {daysInMonth.map(date => {
                 const status = getDayStatus(date);
                 return (
                   <div key={date.toISOString()} className="aspect-square flex flex-col items-center justify-center">
-                    <span className="text-xs text-muted-foreground">{format(date, 'd')}</span>
+                    <span className="text-xs">{format(date, 'd')}</span>
                     <div className={`w-3 h-3 rounded-full ${getStatusColor(status)}`} />
                   </div>
                 );
@@ -329,8 +250,6 @@ const AttendanceHistory = () => {
     </div>
   );
 };
-
-/* ===================== SUMMARY ===================== */
 
 const Summary = ({ icon, label, value }: any) => (
   <Card>

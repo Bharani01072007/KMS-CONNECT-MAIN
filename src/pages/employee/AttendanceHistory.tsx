@@ -28,12 +28,13 @@ import {
 
 interface AttendanceRecord {
   day: string;
-  attendance_type: string | null;
+  attendance_type: string; // 'full' | 'half'
 }
 
 interface LeaveRecord {
   start_date: string;
   end_date: string;
+  status: string | null;
 }
 
 /* ===================== COMPONENT ===================== */
@@ -56,21 +57,22 @@ const AttendanceHistory = () => {
 
   const fetchData = async () => {
     if (!user) return;
+
     setIsLoading(true);
 
-    const start = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
-    const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
+    const monthStart = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
+    const monthEnd = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
 
     const { data: attData } = await supabase
       .from('attendance')
       .select('day, attendance_type')
       .eq('emp_user_id', user.id)
-      .gte('day', start)
-      .lte('day', end);
+      .gte('day', monthStart)
+      .lte('day', monthEnd);
 
     const { data: leaveData } = await supabase
       .from('leaves')
-      .select('start_date, end_date')
+      .select('start_date, end_date, status')
       .eq('emp_user_id', user.id)
       .eq('status', 'approved');
 
@@ -82,61 +84,158 @@ const AttendanceHistory = () => {
 
     /* ===================== SUMMARY ===================== */
 
-    let present = 0;
-    let half = 0;
-    let leave = 0;
-    let absent = 0;
+    const fullDays = attendanceRows.filter(a => a.attendance_type === 'full').length;
+    const halfDays = attendanceRows.filter(a => a.attendance_type === 'half').length;
 
-    const allDays = eachDayOfInterval({
+    const leaveDays = leaveRows.reduce((sum, l) => {
+      const days = eachDayOfInterval({
+        start: new Date(l.start_date),
+        end: new Date(l.end_date),
+      });
+      return sum + days.length;
+    }, 0);
+
+    const today = new Date();
+    const validDays = eachDayOfInterval({
       start: startOfMonth(currentMonth),
-      end: endOfMonth(currentMonth),
+      end: today < endOfMonth(currentMonth) ? today : endOfMonth(currentMonth),
     });
 
-    allDays.forEach(day => {
-      const dateStr = format(day, 'yyyy-MM-dd');
+    const absent =
+      validDays.length - fullDays - halfDays - leaveDays;
 
-      if (leaveRows.some(l => dateStr >= l.start_date && dateStr <= l.end_date)) {
-        leave++;
-        return;
-      }
-
-      const record = attendanceRows.find(a => a.day === dateStr);
-
-      if (!record || record.attendance_type === 'absent') absent++;
-      else if (record.attendance_type === 'full') present++;
-      else if (record.attendance_type === 'half') half++;
+    setSummary({
+      present: fullDays,
+      halfDays,
+      leaves: leaveDays,
+      absent: Math.max(0, absent),
     });
 
-    setSummary({ present, halfDays: half, leaves: leave, absent });
+    await autoSalaryAdjustments(validDays, attendanceRows, leaveRows);
+
     setIsLoading(false);
   };
 
+  /* ===================== AUTO SALARY LOGIC ===================== */
+
+  const autoSalaryAdjustments = async (
+    days: Date[],
+    att: AttendanceRecord[],
+    leaves: LeaveRecord[]
+  ) => {
+    if (!user) return;
+
+    const { data: emp } = await supabase
+      .from('employees')
+      .select('daily_wage')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!emp?.daily_wage) return;
+
+    for (const day of days) {
+      const dateStr = format(day, 'yyyy-MM-dd');
+
+      const isLeave = leaves.some(
+        l => dateStr >= l.start_date && dateStr <= l.end_date
+      );
+      if (isLeave) continue;
+
+      const record = att.find(a => a.day === dateStr);
+
+      let debitAmount = 0;
+      let reason = '';
+
+      if (!record) {
+        debitAmount = emp.daily_wage;
+        reason = `Absence debit for ${dateStr}`;
+      } else if (record.attendance_type === 'half') {
+        debitAmount = emp.daily_wage / 2;
+        reason = `Half-day debit for ${dateStr}`;
+      } else {
+        continue;
+      }
+
+      const monthYear = format(day, 'yyyy-MM-01');
+
+      const { data: exists } = await supabase
+        .from('money_ledger')
+        .select('id')
+        .eq('emp_user_id', user.id)
+        .eq('month_year', monthYear)
+        .eq('reason', reason)
+        .maybeSingle();
+
+      if (exists) continue;
+
+      await supabase.from('money_ledger').insert({
+        emp_user_id: user.id,
+        amount: debitAmount,
+        type: 'debit',
+        reason,
+        month_year: monthYear,
+      });
+    }
+  };
+
+  /* ===================== REALTIME ===================== */
+
   useEffect(() => {
+    if (!user) return;
+
     fetchData();
+
+    const channel = supabase
+      .channel(`attendance-history-${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance' },
+        () => fetchData()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leaves' },
+        () => fetchData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user, currentMonth]);
 
   /* ===================== HELPERS ===================== */
 
-  const getDayStatus = (date: Date) => {
+  const isDateInLeave = (dateStr: string) =>
+    leaves.some(l => dateStr >= l.start_date && dateStr <= l.end_date);
+
+  const getDayStatus = (date: Date): string => {
     const dateStr = format(date, 'yyyy-MM-dd');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    if (leaves.some(l => dateStr >= l.start_date && dateStr <= l.end_date))
-      return 'leave';
+    if (date > today) return 'future';
+    if (isDateInLeave(dateStr)) return 'leave';
 
-    const record = attendance.find(a => a.day === dateStr);
-    if (record?.attendance_type === 'full') return 'present';
-    if (record?.attendance_type === 'half') return 'half';
+    const att = attendance.find(a => a.day === dateStr);
+    if (att?.attendance_type === 'full') return 'present';
+    if (att?.attendance_type === 'half') return 'half';
 
-    return 'absent'; // ✅ future also absent
+    return 'absent';
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'present': return 'bg-green-500';
-      case 'half': return 'bg-yellow-500';
-      case 'leave': return 'bg-blue-500';
-      case 'absent': return 'bg-red-400';
-      default: return 'bg-gray-200';
+      case 'present':
+        return 'bg-green-500';
+      case 'half':
+        return 'bg-yellow-500';
+      case 'leave':
+        return 'bg-blue-500';
+      case 'absent':
+        return 'bg-red-400';
+      default:
+        return 'bg-gray-200 dark:bg-gray-700';
     }
   };
 
@@ -145,15 +244,18 @@ const AttendanceHistory = () => {
     end: endOfMonth(currentMonth),
   });
 
-  const weekDays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const offset = startOfMonth(currentMonth).getDay();
+  const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const firstDayOffset = startOfMonth(currentMonth).getDay();
 
   /* ===================== UI ===================== */
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="min-h-screen bg-background flex flex-col">
+        <Header title="Attendance History" backTo="/employee/dashboard" />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
       </div>
     );
   }
@@ -163,17 +265,19 @@ const AttendanceHistory = () => {
       <Header title="Attendance History" backTo="/employee/dashboard" />
 
       <main className="p-4 max-w-lg mx-auto space-y-4">
-
         {/* MONTH NAV */}
         <Card>
-          <CardContent className="p-4 flex justify-between items-center">
-            <Button variant="ghost" size="icon" onClick={() => setCurrentMonth(subMonths(currentMonth,1))}>
+          <CardContent className="p-4 flex items-center justify-between">
+            <Button variant="ghost" size="icon" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>
               <ChevronLeft />
             </Button>
-            <h2 className="font-semibold">{format(currentMonth,'MMMM yyyy')}</h2>
-            <Button variant="ghost" size="icon"
-              onClick={() => setCurrentMonth(addMonths(currentMonth,1))}
-              disabled={isSameMonth(currentMonth,new Date())}>
+            <h2 className="text-lg font-semibold">{format(currentMonth, 'MMMM yyyy')}</h2>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+              disabled={isSameMonth(currentMonth, new Date())}
+            >
               <ChevronRight />
             </Button>
           </CardContent>
@@ -194,20 +298,26 @@ const AttendanceHistory = () => {
               <Calendar className="h-4 w-4" /> Calendar View
             </CardTitle>
           </CardHeader>
+
           <CardContent className="p-4">
             <div className="grid grid-cols-7 gap-1 mb-2">
               {weekDays.map(d => (
-                <div key={d} className="text-xs text-center text-muted-foreground">{d}</div>
+                <div key={d} className="text-center text-xs font-medium text-muted-foreground">
+                  {d}
+                </div>
               ))}
             </div>
 
             <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: offset }).map((_, i) => <div key={i} />)}
-              {daysInMonth.map(d => {
-                const status = getDayStatus(d);
+              {Array.from({ length: firstDayOffset }).map((_, i) => (
+                <div key={i} />
+              ))}
+
+              {daysInMonth.map(date => {
+                const status = getDayStatus(date);
                 return (
-                  <div key={d.toISOString()} className="aspect-square flex flex-col items-center justify-center">
-                    <span className="text-xs">{format(d,'d')}</span>
+                  <div key={date.toISOString()} className="aspect-square flex flex-col items-center justify-center">
+                    <span className="text-xs text-muted-foreground">{format(date, 'd')}</span>
                     <div className={`w-3 h-3 rounded-full ${getStatusColor(status)}`} />
                   </div>
                 );
@@ -219,6 +329,8 @@ const AttendanceHistory = () => {
     </div>
   );
 };
+
+/* ===================== SUMMARY ===================== */
 
 const Summary = ({ icon, label, value }: any) => (
   <Card>

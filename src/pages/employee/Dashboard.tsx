@@ -5,11 +5,11 @@ import Header from '@/components/Header';
 import AnnouncementBar from '@/components/AnnouncementBar';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { 
-  Calendar, 
-  Clock, 
-  MessageSquare, 
-  Wallet, 
+import {
+  Calendar,
+  Clock,
+  MessageSquare,
+  Wallet,
   AlertCircle,
   CheckCircle,
   ChevronRight,
@@ -21,15 +21,15 @@ import {
 import { Link, useNavigate } from 'react-router-dom';
 import { startOfMonth, endOfMonth } from 'date-fns';
 
+const PAID_LEAVE_LIMIT = 2;
+
 const EmployeeDashboard = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const [employeeName, setEmployeeName] = useState<string>('');
+  const [employeeName, setEmployeeName] = useState('');
   const [todayStatus, setTodayStatus] =
     useState<'not_checked' | 'checked_in' | 'checked_out'>('not_checked');
-  const [inTime, setInTime] = useState<string | null>(null);
-  const [outTime, setOutTime] = useState<string | null>(null);
   const [approvedLeavesThisMonth, setApprovedLeavesThisMonth] = useState(0);
   const [balance, setBalance] = useState(0);
 
@@ -38,18 +38,17 @@ const EmployeeDashboard = () => {
   const fetchData = async () => {
     if (!user) return;
 
-    const { data: profileData } = await supabase
+    // Profile
+    const { data: profile } = await supabase
       .from('profiles')
       .select('full_name')
       .eq('auth_uid', user.id)
       .maybeSingle();
 
-    if (profileData?.full_name) {
-      setEmployeeName(profileData.full_name);
-    }
+    if (profile?.full_name) setEmployeeName(profile.full_name);
 
+    // Attendance
     const today = new Date().toISOString().split('T')[0];
-
     const { data: todayAtt } = await supabase
       .from('attendance')
       .select('checkin_at, checkout_at')
@@ -57,19 +56,11 @@ const EmployeeDashboard = () => {
       .eq('day', today)
       .maybeSingle();
 
-    if (todayAtt) {
-      if (todayAtt.checkout_at) setTodayStatus('checked_out');
-      else if (todayAtt.checkin_at) setTodayStatus('checked_in');
-      else setTodayStatus('not_checked');
+    if (todayAtt?.checkout_at) setTodayStatus('checked_out');
+    else if (todayAtt?.checkin_at) setTodayStatus('checked_in');
+    else setTodayStatus('not_checked');
 
-      setInTime(todayAtt.checkin_at);
-      setOutTime(todayAtt.checkout_at);
-    } else {
-      setTodayStatus('not_checked');
-      setInTime(null);
-      setOutTime(null);
-    }
-
+    // Leaves (approved this month)
     const now = new Date();
     const monthStart = startOfMonth(now).toISOString().split('T')[0];
     const monthEnd = endOfMonth(now).toISOString().split('T')[0];
@@ -84,13 +75,14 @@ const EmployeeDashboard = () => {
 
     setApprovedLeavesThisMonth(count ?? 0);
 
-    const { data: ledgerData } = await supabase
+    // Ledger balance
+    const { data: ledger } = await supabase
       .from('v_ledger_totals')
       .select('balance')
       .eq('emp_user_id', user.id)
       .maybeSingle();
 
-    setBalance(ledgerData?.balance ?? 0);
+    setBalance(ledger?.balance ?? 0);
   };
 
   /* ===================== REALTIME ===================== */
@@ -104,32 +96,17 @@ const EmployeeDashboard = () => {
       .channel(`employee-dashboard-${user.id}`)
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'attendance',
-          filter: `emp_user_id=eq.${user.id}`,
-        },
+        { event: '*', schema: 'public', table: 'attendance', filter: `emp_user_id=eq.${user.id}` },
         fetchData
       )
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'leaves',
-          filter: `emp_user_id=eq.${user.id}`,
-        },
+        { event: '*', schema: 'public', table: 'leaves', filter: `emp_user_id=eq.${user.id}` },
         fetchData
       )
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'money_ledger',
-          filter: `emp_user_id=eq.${user.id}`,
-        },
+        { event: '*', schema: 'public', table: 'money_ledger', filter: `emp_user_id=eq.${user.id}` },
         fetchData
       )
       .subscribe();
@@ -142,16 +119,18 @@ const EmployeeDashboard = () => {
   /* ===================== HELPERS ===================== */
 
   const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good Morning';
-    if (hour < 17) return 'Good Afternoon';
+    const h = new Date().getHours();
+    if (h < 12) return 'Good Morning';
+    if (h < 17) return 'Good Afternoon';
     return 'Good Evening';
   };
+
+  const paidLeavesUsed = Math.min(approvedLeavesThisMonth, PAID_LEAVE_LIMIT);
 
   const menuItems = [
     { icon: Clock, label: 'Attendance', description: 'View & mark attendance', href: '/employee/attendance', color: 'text-blue-500' },
     { icon: Calendar, label: 'Attendance History', description: 'Monthly attendance calendar', href: '/employee/attendance-history', color: 'text-primary' },
-    { icon: Calendar, label: 'Leave Requests', description: 'Apply for leave', href: '/employee/leaves', color: 'text-green-500' },
+    { icon: Calendar, label: 'Leave Requests', description: 'Apply for leave', href: '/employee/leaves', color: 'text-red-500' },
     { icon: IndianRupee, label: 'Advance Requests', description: 'Request salary advance', href: '/employee/advance-requests', color: 'text-emerald-500' },
     { icon: Wallet, label: 'Money Ledger', description: 'View transactions', href: '/employee/ledger', color: 'text-purple-500' },
     { icon: MessageSquare, label: 'Chat', description: 'Chat with admin', href: '/employee/chat', color: 'text-primary' },
@@ -170,7 +149,6 @@ const EmployeeDashboard = () => {
             variant="ghost"
             size="icon"
             onClick={() => navigate('/employee/profile')}
-            className="text-primary-foreground hover:bg-primary-foreground/10"
           >
             <User className="h-5 w-5" />
           </Button>
@@ -180,56 +158,48 @@ const EmployeeDashboard = () => {
       <AnnouncementBar />
 
       <main className="p-4 max-w-4xl mx-auto space-y-6">
-        <div className="px-1">
+        <div>
           <h2 className="text-2xl font-bold">
             {getGreeting()}, {employeeName || 'Employee'}!
           </h2>
-          <p className="text-muted-foreground">
-            Here's your overview for today
-          </p>
+          <p className="text-muted-foreground">Here's your overview for today</p>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
-          <Card className="col-span-3 sm:col-span-1">
-            <CardContent className="p-4 flex items-center gap-3">
-              {todayStatus === 'checked_out' ? (
-                <CheckCircle className="h-8 w-8 text-green-500" />
-              ) : todayStatus === 'checked_in' ? (
-                <Clock className="h-8 w-8 text-blue-500" />
-              ) : (
-                <XCircle className="h-8 w-8 text-muted-foreground" />
-              )}
+          <Card>
+            <CardContent className="p-4 flex gap-3">
+              {todayStatus === 'checked_out'
+                ? <CheckCircle className="text-green-500" />
+                : todayStatus === 'checked_in'
+                ? <Clock className="text-blue-500" />
+                : <XCircle className="text-muted-foreground" />}
               <div>
                 <p className="text-xs text-muted-foreground">Today</p>
                 <p className="font-semibold">
-                  {todayStatus === 'checked_out'
-                    ? 'Checked Out'
-                    : todayStatus === 'checked_in'
-                    ? 'Checked In'
-                    : 'Not Checked'}
+                  {todayStatus.replace('_', ' ')}
                 </p>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="col-span-3 sm:col-span-1">
-            <CardContent className="p-4 flex items-center gap-3">
-              <Calendar className="h-8 w-8 text-green-500" />
+          <Card>
+            <CardContent className="p-4 flex gap-3">
+              <Calendar className="text-red-500" />
               <div>
-                <p className="text-xs text-muted-foreground">
-                  Leaves This Month
-                </p>
+                <p className="text-xs text-muted-foreground">Paid Leaves Used</p>
                 <p className="font-semibold text-xl">
-                  {approvedLeavesThisMonth} / 3
+                  {paidLeavesUsed} / {PAID_LEAVE_LIMIT}
                 </p>
-                <p className="text-xs text-muted-foreground">Approved</p>
+                <p className="text-xs text-muted-foreground">
+                  Extra leaves are unpaid
+                </p>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="col-span-3 sm:col-span-1">
-            <CardContent className="p-4 flex items-center gap-3">
-              <Wallet className="h-8 w-8 text-purple-500" />
+          <Card>
+            <CardContent className="p-4 flex gap-3">
+              <Wallet className="text-purple-500" />
               <div>
                 <p className="text-xs text-muted-foreground">Balance</p>
                 <p className="font-semibold text-xl">
@@ -240,33 +210,23 @@ const EmployeeDashboard = () => {
           </Card>
         </div>
 
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium text-muted-foreground px-1">
-            Quick Actions
-          </h2>
-
-          <div className="grid grid-cols-1 gap-2">
-            {menuItems.map((item) => (
-              <Link key={item.label} to={item.href}>
-                <Card className="cursor-pointer hover:bg-accent/50 transition-colors group">
-                  <CardContent className="p-4 flex items-center gap-4">
-                    <div
-                      className={`p-2.5 rounded-xl bg-background ${item.color}`}
-                    >
-                      <item.icon className="h-5 w-5" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium">{item.label}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {item.description}
-                      </p>
-                    </div>
-                    <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-foreground" />
-                  </CardContent>
-                </Card>
-              </Link>
-            ))}
-          </div>
+        <div className="grid gap-2">
+          {menuItems.map(item => (
+            <Link key={item.label} to={item.href}>
+              <Card className="hover:bg-accent/50 transition">
+                <CardContent className="p-4 flex items-center gap-4">
+                  <div className={`p-2 rounded-lg ${item.color}`}>
+                    <item.icon />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium">{item.label}</p>
+                    <p className="text-xs text-muted-foreground">{item.description}</p>
+                  </div>
+                  <ChevronRight className="text-muted-foreground" />
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
         </div>
       </main>
     </div>

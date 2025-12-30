@@ -1,183 +1,226 @@
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import Header from "@/components/Header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
-import { Calendar } from "@/components/ui/calendar";
-import { toast } from "@/hooks/use-toast";
-import { AlertTriangle, CalendarDays } from "lucide-react";
-import { format, differenceInCalendarDays } from "date-fns";
-import { DateRange } from "react-day-picker";
-import { useAuth } from "@/contexts/AuthContext";
+import { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
+import Header from '@/components/Header';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Badge } from '@/components/ui/badge';
+import { toast } from '@/hooks/use-toast';
+import { CalendarIcon, AlertTriangle, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { cn } from '@/lib/utils';
 
-/* ===================== COMPONENT ===================== */
+interface LeaveRecord {
+  id: string;
+  start_date: string;
+  end_date: string;
+  days: number;
+  reason: string | null;
+  status: string;
+  created_at: string | null;
+}
 
 const EmployeeLeaves = () => {
   const { user } = useAuth();
-
-  const [range, setRange] = useState<DateRange | undefined>(undefined);
-  const [reason, setReason] = useState("");
-  const [remainingPaid, setRemainingPaid] = useState(2);
-  const [submitting, setSubmitting] = useState(false);
-
-  /* ===================== FETCH PAID LEAVES ===================== */
+  const [date, setDate] = useState<Date>();
+  const [reason, setReason] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [approvedThisMonth, setApprovedThisMonth] = useState(0);
+  const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
 
   useEffect(() => {
     if (!user) return;
-
-    const fetchPaidLeaves = async () => {
-      const monthStart = format(new Date(), "yyyy-MM-01");
-      const nextMonth = new Date(monthStart);
-      nextMonth.setMonth(nextMonth.getMonth() + 1);
-
-      const { count } = await supabase
-        .from("leaves")
-        .select("*", { count: "exact", head: true })
-        .eq("emp_user_id", user.id)
-        .eq("status", "approved")
-        .gte("start_date", monthStart)
-        .lt("start_date", format(nextMonth, "yyyy-MM-dd"));
-
-      const used = count || 0;
-      setRemainingPaid(Math.max(2 - used, 0));
-    };
-
-    fetchPaidLeaves();
+    fetchData();
   }, [user]);
 
-  /* ===================== CALCULATIONS ===================== */
+  const fetchData = async () => {
+    const now = new Date();
+    const monthStart = startOfMonth(now).toISOString().split('T')[0];
+    const monthEnd = endOfMonth(now).toISOString().split('T')[0];
 
-  const selectedDays =
-    range?.from && range?.to
-      ? differenceInCalendarDays(range.to, range.from) + 1
-      : 0;
+    // Count approved leaves this month
+    const { count } = await supabase
+      .from('leaves')
+      .select('*', { count: 'exact', head: true })
+      .eq('emp_user_id', user!.id)
+      .eq('status', 'approved')
+      .gte('start_date', monthStart)
+      .lte('start_date', monthEnd);
 
-  const unpaidDays = Math.max(selectedDays - remainingPaid, 0);
+    setApprovedThisMonth(count ?? 0);
 
-  /* ===================== SUBMIT ===================== */
+    // Fetch all leaves
+    const { data } = await supabase
+      .from('leaves')
+      .select('id, start_date, end_date, days, reason, status, created_at')
+      .eq('emp_user_id', user!.id)
+      .order('start_date', { ascending: false });
+
+    if (data) setLeaves(data);
+  };
 
   const handleSubmit = async () => {
-    if (!user || !range?.from || !range?.to) {
-      toast({ title: "Please select leave dates", variant: "destructive" });
+    if (!date) {
+      toast({ title: 'Error', description: 'Please select a date', variant: 'destructive' });
       return;
     }
 
-    setSubmitting(true);
-
+    setIsSubmitting(true);
     try {
-      await supabase.from("leaves").insert({
-        emp_user_id: user.id,
-        start_date: format(range.from, "yyyy-MM-dd"),
-        end_date: format(range.to, "yyyy-MM-dd"),
-        days: selectedDays,
-        reason,
-        status: "pending",
-      });
+      const leaveDate = format(date, 'yyyy-MM-dd');
+      const { error } = await supabase
+        .from('leaves')
+        .insert({
+          emp_user_id: user!.id,
+          start_date: leaveDate,
+          end_date: leaveDate,
+          days: 1,
+          reason: reason.trim() || null,
+          status: 'pending',
+        });
 
-      toast({ title: "Leave request submitted" });
-      setRange(undefined);
-      setReason("");
-    } catch (err: any) {
-      toast({
-        title: "Error",
-        description: err.message,
-        variant: "destructive",
-      });
+      if (error) throw error;
+
+      toast({ title: 'Success', description: 'Leave request submitted!' });
+      setDate(undefined);
+      setReason('');
+      fetchData();
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
     } finally {
-      setSubmitting(false);
+      setIsSubmitting(false);
     }
   };
 
-  /* ===================== UI ===================== */
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'approved':
+        return <Badge className="bg-green-500"><CheckCircle className="h-3 w-3 mr-1" />Approved</Badge>;
+      case 'rejected':
+        return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Rejected</Badge>;
+      default:
+        return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" />Pending</Badge>;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
       <Header title="Leave Requests" backTo="/employee/dashboard" />
-
-      <main className="p-4 max-w-xl mx-auto space-y-5">
-
-        {/* INFO CARD */}
-        <Card className="border-red-200">
-          <CardContent className="p-4 flex items-center justify-between">
-            <span className="text-sm font-medium">
-              Paid leaves remaining this month
-            </span>
-            <Badge
-              className={
-                remainingPaid === 0
-                  ? "bg-red-500"
-                  : "bg-red-500/90"
-              }
-            >
-              {remainingPaid}
-            </Badge>
+      
+      <main className="p-4 max-w-2xl mx-auto space-y-4">
+        {/* Monthly Summary */}
+        <Card className={cn(
+          approvedThisMonth >= 3 ? "border-warning bg-warning/5" : "border-green-500/30 bg-green-500/5"
+        )}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Approved leaves this month</p>
+                <p className="text-2xl font-bold">{approvedThisMonth} / 3</p>
+              </div>
+              {approvedThisMonth >= 3 && (
+                <AlertTriangle className="h-6 w-6 text-warning" />
+              )}
+            </div>
           </CardContent>
         </Card>
 
-        {/* WARNING */}
-        <Card className="bg-red-50 border-red-200">
-          <CardContent className="p-4 flex gap-3 text-sm text-red-700">
-            <AlertTriangle className="h-5 w-5 mt-0.5" />
-            <p>
-              Only <strong>2 paid leaves</strong> are allowed per month.
-              Any additional days will be treated as <strong>unpaid leave</strong>.
-            </p>
-          </CardContent>
-        </Card>
+        {/* Warning for extra leaves */}
+        {approvedThisMonth >= 3 && (
+          <Card className="border-warning/50 bg-warning/10">
+            <CardContent className="p-4 flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
+              <p className="text-sm">
+                From the 4th approved leave in a month, salary will be deducted automatically as unpaid leave.
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
-        {/* APPLY LEAVE */}
+        {/* Apply Leave Form */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CalendarDays className="h-5 w-5 text-red-500" />
-              Apply for Leave
-            </CardTitle>
+            <CardTitle>Apply for Leave</CardTitle>
+            <CardDescription>Select a date and provide a reason</CardDescription>
           </CardHeader>
-
           <CardContent className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-2 block">Leave Date</label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-full justify-start text-left font-normal",
+                      !date && "text-muted-foreground"
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {date ? format(date, 'PPP') : 'Pick a date'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={date}
+                    onSelect={setDate}
+                    disabled={(date) => date < new Date()}
+                    initialFocus
+                    className="pointer-events-auto"
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
 
-            {/* SINGLE RANGE CALENDAR */}
-            <Calendar
-              mode="range"
-              selected={range}
-              onSelect={setRange}
-              className="rounded-md border"
-            />
+            <div>
+              <label className="text-sm font-medium mb-2 block">Reason (optional)</label>
+              <Textarea
+                placeholder="Enter reason for leave..."
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={3}
+              />
+            </div>
 
-            {/* SUMMARY */}
-            {selectedDays > 0 && (
-              <div className="text-sm space-y-1">
-                <p>
-                  Selected days: <strong>{selectedDays}</strong>
-                </p>
-                {unpaidDays > 0 && (
-                  <p className="text-red-600 font-medium">
-                    {unpaidDays} day(s) will be unpaid as per company policy
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* REASON */}
-            <Textarea
-              placeholder="Reason for leave (optional)"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={3}
-            />
-
-            <Button
-              className="w-full bg-red-600 hover:bg-red-700"
-              onClick={handleSubmit}
-              disabled={submitting}
-            >
-              Submit Leave Request
+            <Button onClick={handleSubmit} disabled={isSubmitting} className="w-full">
+              {isSubmitting ? 'Submitting...' : 'Submit Leave Request'}
             </Button>
           </CardContent>
         </Card>
 
+        {/* Leave History */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Leave History</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {leaves.length === 0 ? (
+                <p className="text-center text-muted-foreground py-4">No leave requests yet</p>
+              ) : (
+                leaves.map((leave) => (
+                  <div key={leave.id} className="p-3 bg-muted/50 rounded-lg">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-medium">
+                          {format(new Date(leave.start_date), 'PPP')}
+                          {leave.days > 1 && ` - ${format(new Date(leave.end_date), 'PPP')}`}
+                        </p>
+                        {leave.reason && (
+                          <p className="text-sm text-muted-foreground mt-1">{leave.reason}</p>
+                        )}
+                      </div>
+                      {getStatusBadge(leave.status)}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </main>
     </div>
   );

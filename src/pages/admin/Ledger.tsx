@@ -94,7 +94,7 @@ const AdminLedger = () => {
       .from('v_ledger_totals')
       .select('balance')
       .eq('emp_user_id', selectedEmployee)
-      .eq('month_year', monthStart)
+      .eq('month_year', format(selectedMonth,'yyyy-MM-01'))
       .maybeSingle();
 
     setBalance(Number(total?.balance ?? 0));

@@ -1,4 +1,3 @@
-// src/contexts/AuthContext.tsx
 import React, {
   createContext,
   useContext,
@@ -12,17 +11,19 @@ import { toast } from '@/hooks/use-toast';
 
 /* ================= TYPES ================= */
 
+type Role = 'admin' | 'employee';
+
 type AuthContextType = {
   user: User | null;
   session: Session | null;
-  role: string | null;
+  role: Role | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (
     email: string,
     password: string,
     name?: string,
-    role?: 'admin' | 'employee'
+    role?: Role
   ) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
 };
@@ -34,84 +35,78 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  const [role, setRole] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [role, setRole] = useState<Role | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  /* ================= FETCH PROFILE (NON-BLOCKING) ================= */
+  /* ================= PROFILE FETCH ================= */
 
-  const fetchProfile = async (uid?: string) => {
-    if (!uid) {
-      setRole(null);
-      return;
-    }
-
+  const fetchProfileRole = async (authUid: string) => {
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('role')
-        .eq('id', uid)
+        .eq('auth_uid', authUid) // ✅ CORRECT COLUMN
         .maybeSingle();
 
-      // ✅ SAFE DEFAULT (never block UI)
-      setRole(data?.role ?? 'employee');
-    } catch (error) {
-      console.warn('fetchProfile failed', error);
-      setRole('employee');
+      if (error) throw error;
+
+      if (!data?.role) {
+        console.warn('Profile exists but role missing → employee fallback');
+        setRole('employee');
+        return;
+      }
+
+      setRole(data.role as Role);
+    } catch (err) {
+      console.error('Failed to fetch profile role:', err);
+      setRole('employee'); // controlled fallback
     }
   };
 
-  /* ================= AUTH INITIALIZATION ================= */
+  /* ================= INITIAL AUTH LOAD ================= */
 
   useEffect(() => {
-    let mounted = true;
+    let active = true;
 
-    const init = async () => {
+    const initAuth = async () => {
       try {
         const { data } = await supabase.auth.getSession();
-        if (!mounted) return;
+        if (!active) return;
 
-        const currentSession = data.session ?? null;
-        const currentUser = currentSession?.user ?? null;
-
-        setSession(currentSession);
-        setUser(currentUser);
-
-        // 🚀 DO NOT await (prevents infinite loading)
-        if (currentUser) {
-          fetchProfile(currentUser.id);
-        } else {
-          setRole(null);
-        }
-      } catch (err) {
-        console.error('Auth init error', err);
-        setUser(null);
-        setSession(null);
-        setRole(null);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
-
-    // 🧨 HARD FAILSAFE (NO INFINITE SPLASH)
-    const timeout = setTimeout(() => {
-      if (mounted) {
-        console.warn('Auth timeout — forcing UI release');
-        setLoading(false);
-      }
-    }, 3000);
-
-    init();
-
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      (event: AuthChangeEvent, payload) => {
-        const session = payload ?? null;
+        const session = data.session ?? null;
         const user = session?.user ?? null;
 
         setSession(session);
         setUser(user);
 
+        if (user) {
+          await fetchProfileRole(user.id);
+        } else {
+          setRole(null);
+        }
+      } catch (err) {
+        console.error('Auth init failed:', err);
+        setUser(null);
+        setSession(null);
+        setRole(null);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    initAuth();
+
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      async (event: AuthChangeEvent, session) => {
+        const user = session?.user ?? null;
+
+        setSession(session ?? null);
+        setUser(user);
+
         if (event === 'SIGNED_IN' && user) {
-          fetchProfile(user.id);
+          setLoading(true);
+          await fetchProfileRole(user.id);
+          setLoading(false);
         }
 
         if (event === 'SIGNED_OUT') {
@@ -121,9 +116,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     );
 
     return () => {
-      mounted = false;
-      clearTimeout(timeout);
-      listener?.subscription?.unsubscribe();
+      active = false;
+      listener?.subscription.unsubscribe();
     };
   }, []);
 
@@ -143,11 +137,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           filter: `user_id=eq.${user.id}`,
         },
         (payload) => {
-          const n = payload.new as {
-            title?: string | null;
-            body?: string | null;
-          };
-
+          const n = payload.new as { title?: string; body?: string };
           toast({
             title: n.title ?? 'Notification',
             description: n.body ?? '',
@@ -176,7 +166,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     email: string,
     password: string,
     name?: string,
-    roleParam: 'admin' | 'employee' = 'employee'
+    roleParam: Role = 'employee'
   ) => {
     try {
       const res = await supabase.auth.signUp({ email, password });
@@ -185,7 +175,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const u = res.data?.user;
       if (!error && u) {
         await supabase.from('profiles').upsert({
-          id: u.id,
+          auth_uid: u.id, // ✅ IMPORTANT
           email,
           full_name: name ?? null,
           role: roleParam,
@@ -200,14 +190,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
-    try {
-      await supabase.auth.signOut();
-    } finally {
-      setUser(null);
-      setSession(null);
-      setRole(null);
-      setLoading(false); // ✅ prevents stuck splash
-    }
+    await supabase.auth.signOut();
+    setUser(null);
+    setSession(null);
+    setRole(null);
+    setLoading(false);
   };
 
   /* ================= PROVIDER ================= */
@@ -233,8 +220,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error('useAuth must be used within AuthProvider');
-  }
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }

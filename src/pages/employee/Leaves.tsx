@@ -12,11 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Calendar } from '@/components/ui/calendar';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/hooks/use-toast';
 import {
@@ -35,8 +31,6 @@ import {
 import { cn } from '@/lib/utils';
 import type { DateRange } from 'react-day-picker';
 
-/* ===================== TYPES ===================== */
-
 interface LeaveRecord {
   id: string;
   start_date: string;
@@ -44,53 +38,45 @@ interface LeaveRecord {
   days: number;
   reason: string | null;
   status: string;
-  created_at: string | null;
+  is_paid: boolean | null;
 }
-
-/* ===================== COMPONENT ===================== */
 
 const EmployeeLeaves = () => {
   const { user } = useAuth();
 
-  const [range, setRange] = useState<DateRange | undefined>();
+  const [range, setRange] = useState<DateRange>();
   const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const [approvedThisMonth, setApprovedThisMonth] = useState(0);
+  const [paidLeavesThisMonth, setPaidLeavesThisMonth] = useState(0);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
 
-  /* ===================== FETCH ===================== */
-
   useEffect(() => {
-    if (!user) return;
-    fetchData();
+    if (user) fetchData();
   }, [user]);
 
   const fetchData = async () => {
-    const now = new Date();
-    const monthStart = format(startOfMonth(now), 'yyyy-MM-dd');
-    const monthEnd = format(endOfMonth(now), 'yyyy-MM-dd');
+    const monthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd');
+    const monthEnd = format(endOfMonth(new Date()), 'yyyy-MM-dd');
 
     const { count } = await supabase
       .from('leaves')
       .select('*', { count: 'exact', head: true })
       .eq('emp_user_id', user!.id)
       .eq('status', 'approved')
+      .eq('is_paid', true)
       .gte('start_date', monthStart)
       .lte('start_date', monthEnd);
 
-    setApprovedThisMonth(count ?? 0);
+    setPaidLeavesThisMonth(count ?? 0);
 
     const { data } = await supabase
       .from('leaves')
       .select('*')
       .eq('emp_user_id', user!.id)
-      .order('start_date', { ascending: false });
+      .order('created_at', { ascending: false });
 
-    if (data) setLeaves(data);
+    setLeaves(data || []);
   };
-
-  /* ===================== HELPERS ===================== */
 
   const selectedDays =
     range?.from && range?.to
@@ -99,182 +85,96 @@ const EmployeeLeaves = () => {
 
   const unpaidDays = Math.max(0, selectedDays.length - 2);
 
-  /* ===================== SUBMIT ===================== */
-
   const handleSubmit = async () => {
     if (!range?.from || !range?.to) {
-      toast({
-        title: 'Error',
-        description: 'Please select leave dates',
-        variant: 'destructive',
-      });
+      toast({ title: 'Select leave dates', variant: 'destructive' });
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      const start = format(range.from, 'yyyy-MM-dd');
-      const end = format(range.to, 'yyyy-MM-dd');
-      const days = selectedDays.length;
-
-      /* 🔥 Validate paid leave status via SQL */
-      for (const d of selectedDays) {
-        const { data, error } = await supabase.rpc(
-          'get_paid_leave_status',
-          {
-            p_emp_user_id: user!.id,
-            p_day: format(d, 'yyyy-MM-dd'),
-          }
-        );
-
-        if (error) throw error;
-        // data = true (paid) / false (unpaid) → backend handles salary logic
-      }
-
-      const { error } = await supabase.from('leaves').insert({
+      await supabase.from('leaves').insert({
         emp_user_id: user!.id,
-        start_date: start,
-        end_date: end,
-        days,
-        reason: reason.trim() || null,
+        start_date: format(range.from, 'yyyy-MM-dd'),
+        end_date: format(range.to, 'yyyy-MM-dd'),
+        days: selectedDays.length,
+        reason: reason || null,
         status: 'pending',
       });
 
-      if (error) throw error;
-
-      toast({
-        title: 'Leave Requested',
-        description: 'Your leave request has been submitted',
-      });
-
+      toast({ title: 'Leave request submitted' });
       setRange(undefined);
       setReason('');
       fetchData();
-    } catch (err: any) {
-      toast({
-        title: 'Error',
-        description: err.message,
-        variant: 'destructive',
-      });
+    } catch (e: any) {
+      toast({ title: e.message, variant: 'destructive' });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  /* ===================== STATUS BADGE ===================== */
-
-  const getStatusBadge = (status: string) => {
-    if (status === 'approved')
-      return (
-        <Badge className="bg-green-500">
-          <CheckCircle className="h-3 w-3 mr-1" />
-          Approved
-        </Badge>
-      );
-    if (status === 'rejected')
-      return (
-        <Badge variant="destructive">
-          <XCircle className="h-3 w-3 mr-1" />
-          Rejected
-        </Badge>
-      );
-    return (
-      <Badge variant="secondary">
-        <Clock className="h-3 w-3 mr-1" />
-        Pending
-      </Badge>
-    );
+  const getStatusBadge = (l: LeaveRecord) => {
+    if (l.status === 'approved' && l.is_paid)
+      return <Badge className="bg-green-500">Paid</Badge>;
+    if (l.status === 'approved' && l.is_paid === false)
+      return <Badge variant="destructive">Unpaid</Badge>;
+    if (l.status === 'rejected')
+      return <Badge variant="destructive">Rejected</Badge>;
+    return <Badge variant="secondary">Pending</Badge>;
   };
-
-  /* ===================== UI ===================== */
 
   return (
     <div className="min-h-screen bg-background">
       <Header title="Leave Requests" backTo="/employee/dashboard" />
 
       <main className="p-4 max-w-2xl mx-auto space-y-4">
-
-        {/* MONTHLY SUMMARY */}
         <Card
           className={cn(
-            approvedThisMonth >= 2
+            paidLeavesThisMonth >= 2
               ? 'border-warning bg-warning/5'
               : 'border-green-500/30 bg-green-500/5'
           )}
         >
           <CardContent className="p-4 flex justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">
-                Paid leaves used this month
-              </p>
-              <p className="text-2xl font-bold">{approvedThisMonth} / 2</p>
+              <p className="text-sm">Paid leaves used this month</p>
+              <p className="text-2xl font-bold">{paidLeavesThisMonth} / 2</p>
             </div>
-            {approvedThisMonth >= 2 && (
-              <AlertTriangle className="h-6 w-6 text-warning" />
+            {paidLeavesThisMonth >= 2 && (
+              <AlertTriangle className="text-warning" />
             )}
           </CardContent>
         </Card>
 
-        {/* COMPANY RULE */}
-        {approvedThisMonth >= 2 && (
-          <Card className="border-warning/50 bg-warning/10">
-            <CardContent className="p-4 flex gap-3">
-              <AlertTriangle className="h-5 w-5 text-warning mt-0.5" />
-              <p className="text-sm">
-                From the <strong>3rd leave day</strong> onwards, salary will be
-                deducted as per company norms.
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* APPLY LEAVE */}
         <Card>
           <CardHeader>
             <CardTitle>Apply for Leave</CardTitle>
-            <CardDescription>
-              Select dates and provide a reason
-            </CardDescription>
+            <CardDescription>Select dates and reason</CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-4">
             <Popover>
               <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start text-left"
-                >
+                <Button variant="outline" className="w-full justify-start">
                   <CalendarIcon className="mr-2 h-4 w-4" />
                   {range?.from
-                    ? `${format(range.from, 'PPP')} → ${
-                        range.to ? format(range.to, 'PPP') : ''
-                      }`
+                    ? `${format(range.from, 'PPP')} → ${range.to ? format(range.to, 'PPP') : ''}`
                     : 'Select leave dates'}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="p-0">
-                <Calendar
-                  mode="range"
-                  selected={range}
-                  onSelect={setRange}
-                  disabled={(d) => d < new Date()}
-                  numberOfMonths={1}
-                />
+                <Calendar mode="range" selected={range} onSelect={setRange} />
               </PopoverContent>
             </Popover>
 
             {selectedDays.length > 0 && (
-              <div className="text-sm space-y-1">
-                <p>
-                  Selected days: <strong>{selectedDays.length}</strong>
-                </p>
+              <p className="text-sm">
+                Selected: {selectedDays.length} days
                 {unpaidDays > 0 && (
-                  <p className="text-destructive">
-                    Unpaid days: <strong>{unpaidDays}</strong>
-                  </p>
+                  <span className="text-destructive"> | Unpaid: {unpaidDays}</span>
                 )}
-              </div>
+              </p>
             )}
 
             <Textarea
@@ -283,46 +183,29 @@ const EmployeeLeaves = () => {
               onChange={(e) => setReason(e.target.value)}
             />
 
-            <Button
-              className="w-full"
-              disabled={isSubmitting}
-              onClick={handleSubmit}
-            >
-              {isSubmitting ? 'Submitting…' : 'Submit Leave Request'}
+            <Button onClick={handleSubmit} disabled={isSubmitting} className="w-full">
+              Submit Leave Request
             </Button>
           </CardContent>
         </Card>
 
-        {/* HISTORY */}
         <Card>
           <CardHeader>
             <CardTitle>Leave History</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {leaves.length === 0 ? (
-              <p className="text-center text-muted-foreground py-4">
-                No leave requests yet
-              </p>
-            ) : (
-              leaves.map((l) => (
-                <div key={l.id} className="p-3 bg-muted/50 rounded-lg">
-                  <div className="flex justify-between">
-                    <div>
-                      <p className="font-medium">
-                        {format(new Date(l.start_date), 'PPP')} →{' '}
-                        {format(new Date(l.end_date), 'PPP')}
-                      </p>
-                      {l.reason && (
-                        <p className="text-sm text-muted-foreground">
-                          {l.reason}
-                        </p>
-                      )}
-                    </div>
-                    {getStatusBadge(l.status)}
-                  </div>
+          <CardContent className="space-y-2">
+            {leaves.map((l) => (
+              <div key={l.id} className="p-3 bg-muted/50 rounded-lg flex justify-between">
+                <div>
+                  <p className="font-medium">
+                    {format(new Date(l.start_date), 'PPP')} →{' '}
+                    {format(new Date(l.end_date), 'PPP')}
+                  </p>
+                  {l.reason && <p className="text-sm">{l.reason}</p>}
                 </div>
-              ))
-            )}
+                {getStatusBadge(l)}
+              </div>
+            ))}
           </CardContent>
         </Card>
       </main>

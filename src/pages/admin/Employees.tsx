@@ -29,13 +29,13 @@ import { Users, Edit, MapPin, IndianRupee } from "lucide-react";
 /* ===================== TYPES ===================== */
 
 interface Employee {
-  user_id: string | null;
+  user_id: string;
   full_name: string | null;
   email: string | null;
   avatar_url: string | null;
+  designation: string | null;
   daily_wage: number | null;
   site_id: string | null;
-  designation: string | null;
 }
 
 interface Site {
@@ -64,32 +64,52 @@ const AdminEmployees = () => {
   /* ===================== FETCH ===================== */
 
   const fetchEmployees = async () => {
-    const { data } = await supabase
-      .from("employee_directory")
-      .select("*")
-      .eq("role", "employee");
+    const { data, error } = await supabase
+      .from("employees")
+      .select(`
+        user_id,
+        designation,
+        daily_wage,
+        site_id,
+        profiles (
+          full_name,
+          email,
+          avatar_url
+        )
+      `);
 
-    if (data) setEmployees(data);
+    if (error) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+      return;
+    }
 
-    const { data: siteData } = await supabase
-      .from("sites")
-      .select("id, name");
+    const formatted = data.map((e: any) => ({
+      user_id: e.user_id,
+      designation: e.designation,
+      daily_wage: e.daily_wage,
+      site_id: e.site_id,
+      full_name: e.profiles?.full_name ?? null,
+      email: e.profiles?.email ?? null,
+      avatar_url: e.profiles?.avatar_url ?? null,
+    }));
 
-    if (siteData) setSites(siteData);
+    setEmployees(formatted);
+  };
+
+  const fetchSites = async () => {
+    const { data } = await supabase.from("sites").select("id, name");
+    if (data) setSites(data);
   };
 
   /* ===================== REALTIME ===================== */
 
   useEffect(() => {
     fetchEmployees();
+    fetchSites();
 
     const channel = supabase
-      .channel("admin-employees-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "employees" },
-        fetchEmployees
-      )
+      .channel("admin-employees")
+      .on("postgres_changes", { event: "*", schema: "public", table: "employees" }, fetchEmployees)
       .subscribe();
 
     return () => {
@@ -97,68 +117,45 @@ const AdminEmployees = () => {
     };
   }, []);
 
-  /* ===================== HELPERS ===================== */
-
-  const getSiteName = (siteId: string | null) =>
-    sites.find((s) => s.id === siteId)?.name || "Not assigned";
-
   /* ===================== ACTIONS ===================== */
 
   const handleEdit = (emp: Employee) => {
     setSelectedEmployee(emp);
     setEditForm({
-      designation: emp.designation || "",
-      daily_wage: emp.daily_wage?.toString() || "",
-      site_id: emp.site_id || "",
+      designation: emp.designation ?? "",
+      daily_wage: emp.daily_wage?.toString() ?? "",
+      site_id: emp.site_id ?? "",
     });
     setIsEditOpen(true);
   };
 
   const handleSave = async () => {
-    if (!selectedEmployee?.user_id) {
-      toast({
-        title: "Invalid employee",
-        description: "User ID missing",
-        variant: "destructive",
-      });
-      return;
-    }
+    if (!selectedEmployee) return;
 
     setIsSaving(true);
 
     const { error } = await supabase
       .from("employees")
-      .upsert(
-        {
-          user_id: selectedEmployee.user_id,
-          designation: editForm.designation || null,
-          daily_wage: editForm.daily_wage
-            ? Number(editForm.daily_wage)
-            : null,
-          site_id: editForm.site_id || null,
-        },
-        {
-          onConflict: "user_id",
-        }
-      );
+      .update({
+        designation: editForm.designation || null,
+        daily_wage: editForm.daily_wage ? Number(editForm.daily_wage) : null,
+        site_id: editForm.site_id || null,
+      })
+      .eq("user_id", selectedEmployee.user_id);
 
     if (error) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Update failed", description: error.message, variant: "destructive" });
     } else {
-      toast({
-        title: "Success",
-        description: "Employee updated successfully",
-      });
+      toast({ title: "Employee updated successfully" });
       setIsEditOpen(false);
       fetchEmployees();
     }
 
     setIsSaving(false);
   };
+
+  const getSiteName = (id: string | null) =>
+    sites.find(s => s.id === id)?.name || "Not assigned";
 
   /* ===================== UI ===================== */
 
@@ -176,41 +173,35 @@ const AdminEmployees = () => {
           </CardHeader>
 
           <CardContent className="space-y-3">
-            {employees.map((emp) => (
+            {employees.map(emp => (
               <div
-                key={emp.user_id!}
-                className="p-4 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted"
-                onClick={() =>
-                  navigate(`/admin/attendance-history/${emp.user_id}`)
-                }
+                key={emp.user_id}
+                className="p-4 bg-muted/50 rounded-lg hover:bg-muted cursor-pointer"
+                onClick={() => navigate(`/admin/attendance-history/${emp.user_id}`)}
               >
-                <div className="flex gap-4">
+                <div className="flex gap-4 items-center">
                   <Avatar>
-                    <AvatarImage src={emp.avatar_url || undefined} />
-                    <AvatarFallback>
-                      {emp.full_name?.[0] || "E"}
-                    </AvatarFallback>
+                    <AvatarImage src={emp.avatar_url ?? undefined} />
+                    <AvatarFallback>{emp.full_name?.[0] ?? "E"}</AvatarFallback>
                   </Avatar>
 
                   <div className="flex-1">
                     <p className="font-medium">{emp.full_name}</p>
                     <p className="text-sm text-muted-foreground">{emp.email}</p>
-
                     <p className="text-sm flex gap-1">
                       <MapPin className="h-3 w-3" />
                       {getSiteName(emp.site_id)}
                     </p>
-
                     <p className="text-sm text-green-600 flex gap-1">
                       <IndianRupee className="h-3 w-3" />
-                      {emp.daily_wage ?? "--"} / day
+                      {emp.daily_wage ?? 0}/day
                     </p>
                   </div>
 
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={(e) => {
+                    onClick={e => {
                       e.stopPropagation();
                       handleEdit(emp);
                     }}
@@ -223,7 +214,7 @@ const AdminEmployees = () => {
           </CardContent>
         </Card>
 
-        {/* EDIT DIALOG */}
+        {/* EDIT MODAL */}
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
           <DialogContent>
             <DialogHeader>
@@ -231,41 +222,41 @@ const AdminEmployees = () => {
             </DialogHeader>
 
             <div className="space-y-4">
-              <Label>Designation</Label>
-              <Input
-                value={editForm.designation}
-                onChange={(e) =>
-                  setEditForm({ ...editForm, designation: e.target.value })
-                }
-              />
+              <div>
+                <Label>Designation</Label>
+                <Input
+                  value={editForm.designation}
+                  onChange={e => setEditForm({ ...editForm, designation: e.target.value })}
+                />
+              </div>
 
-              <Label>Daily Wage</Label>
-              <Input
-                type="number"
-                value={editForm.daily_wage}
-                onChange={(e) =>
-                  setEditForm({ ...editForm, daily_wage: e.target.value })
-                }
-              />
+              <div>
+                <Label>Daily Wage</Label>
+                <Input
+                  type="number"
+                  value={editForm.daily_wage}
+                  onChange={e => setEditForm({ ...editForm, daily_wage: e.target.value })}
+                />
+              </div>
 
-              <Label>Site</Label>
-              <Select
-                value={editForm.site_id}
-                onValueChange={(v) =>
-                  setEditForm({ ...editForm, site_id: v })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select site" />
-                </SelectTrigger>
-                <SelectContent>
-                  {sites.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div>
+                <Label>Site</Label>
+                <Select
+                  value={editForm.site_id}
+                  onValueChange={v => setEditForm({ ...editForm, site_id: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select site" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sites.map(s => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <DialogFooter>

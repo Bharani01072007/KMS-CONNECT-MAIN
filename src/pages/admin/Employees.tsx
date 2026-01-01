@@ -1,9 +1,14 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import Header from "@/components/Header";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -29,6 +34,7 @@ import { Users, Edit, MapPin, IndianRupee } from "lucide-react";
 /* ===================== TYPES ===================== */
 
 interface Employee {
+  id: string;               // ✅ employees.id (PRIMARY KEY)
   user_id: string;
   full_name: string | null;
   email: string | null;
@@ -65,35 +71,26 @@ const AdminEmployees = () => {
 
   const fetchEmployees = async () => {
     const { data, error } = await supabase
-      .from("employees")
+      .from("employee_directory")
       .select(`
+        id,
         user_id,
+        full_name,
+        email,
+        avatar_url,
         designation,
         daily_wage,
-        site_id,
-        profiles (
-          full_name,
-          email,
-          avatar_url
-        )
-      `);
+        site_id
+      `)
+      .eq("role", "employee")
+      .order("full_name");
 
     if (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
       return;
     }
 
-    const formatted = data.map((e: any) => ({
-      user_id: e.user_id,
-      designation: e.designation,
-      daily_wage: e.daily_wage,
-      site_id: e.site_id,
-      full_name: e.profiles?.full_name ?? null,
-      email: e.profiles?.email ?? null,
-      avatar_url: e.profiles?.avatar_url ?? null,
-    }));
-
-    setEmployees(formatted);
+    setEmployees(data as Employee[]);
   };
 
   const fetchSites = async () => {
@@ -101,15 +98,19 @@ const AdminEmployees = () => {
     if (data) setSites(data);
   };
 
-  /* ===================== REALTIME ===================== */
+  /* ===================== EFFECT ===================== */
 
   useEffect(() => {
     fetchEmployees();
     fetchSites();
 
     const channel = supabase
-      .channel("admin-employees")
-      .on("postgres_changes", { event: "*", schema: "public", table: "employees" }, fetchEmployees)
+      .channel("admin-employees-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "employees" },
+        fetchEmployees
+      )
       .subscribe();
 
     return () => {
@@ -138,13 +139,19 @@ const AdminEmployees = () => {
       .from("employees")
       .update({
         designation: editForm.designation || null,
-        daily_wage: editForm.daily_wage ? Number(editForm.daily_wage) : null,
+        daily_wage: editForm.daily_wage
+          ? Number(editForm.daily_wage)
+          : null,
         site_id: editForm.site_id || null,
       })
-      .eq("user_id", selectedEmployee.user_id);
+      .eq("id", selectedEmployee.id); // ✅ CRITICAL FIX
 
     if (error) {
-      toast({ title: "Update failed", description: error.message, variant: "destructive" });
+      toast({
+        title: "Update failed",
+        description: error.message,
+        variant: "destructive",
+      });
     } else {
       toast({ title: "Employee updated successfully" });
       setIsEditOpen(false);
@@ -155,7 +162,7 @@ const AdminEmployees = () => {
   };
 
   const getSiteName = (id: string | null) =>
-    sites.find(s => s.id === id)?.name || "Not assigned";
+    sites.find((s) => s.id === id)?.name || "Not assigned";
 
   /* ===================== UI ===================== */
 
@@ -173,16 +180,20 @@ const AdminEmployees = () => {
           </CardHeader>
 
           <CardContent className="space-y-3">
-            {employees.map(emp => (
+            {employees.map((emp) => (
               <div
-                key={emp.user_id}
+                key={emp.id}
                 className="p-4 bg-muted/50 rounded-lg hover:bg-muted cursor-pointer"
-                onClick={() => navigate(`/admin/attendance-history/${emp.user_id}`)}
+                onClick={() =>
+                  navigate(`/admin/attendance-history/${emp.user_id}`)
+                }
               >
                 <div className="flex gap-4 items-center">
                   <Avatar>
                     <AvatarImage src={emp.avatar_url ?? undefined} />
-                    <AvatarFallback>{emp.full_name?.[0] ?? "E"}</AvatarFallback>
+                    <AvatarFallback>
+                      {emp.full_name?.[0] ?? "E"}
+                    </AvatarFallback>
                   </Avatar>
 
                   <div className="flex-1">
@@ -201,7 +212,7 @@ const AdminEmployees = () => {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={e => {
+                    onClick={(e) => {
                       e.stopPropagation();
                       handleEdit(emp);
                     }}
@@ -214,7 +225,8 @@ const AdminEmployees = () => {
           </CardContent>
         </Card>
 
-        {/* EDIT MODAL */}
+        {/* ===================== EDIT DIALOG ===================== */}
+
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
           <DialogContent>
             <DialogHeader>
@@ -226,7 +238,9 @@ const AdminEmployees = () => {
                 <Label>Designation</Label>
                 <Input
                   value={editForm.designation}
-                  onChange={e => setEditForm({ ...editForm, designation: e.target.value })}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, designation: e.target.value })
+                  }
                 />
               </div>
 
@@ -235,7 +249,9 @@ const AdminEmployees = () => {
                 <Input
                   type="number"
                   value={editForm.daily_wage}
-                  onChange={e => setEditForm({ ...editForm, daily_wage: e.target.value })}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, daily_wage: e.target.value })
+                  }
                 />
               </div>
 
@@ -243,13 +259,15 @@ const AdminEmployees = () => {
                 <Label>Site</Label>
                 <Select
                   value={editForm.site_id}
-                  onValueChange={v => setEditForm({ ...editForm, site_id: v })}
+                  onValueChange={(v) =>
+                    setEditForm({ ...editForm, site_id: v })
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select site" />
                   </SelectTrigger>
                   <SelectContent>
-                    {sites.map(s => (
+                    {sites.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.name}
                       </SelectItem>

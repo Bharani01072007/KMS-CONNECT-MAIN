@@ -87,6 +87,8 @@ const AttendanceHistory = () => {
     let leave = 0;
     let absent = 0;
 
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+
     const allDays = eachDayOfInterval({
       start: startOfMonth(currentMonth),
       end: endOfMonth(currentMonth),
@@ -95,12 +97,19 @@ const AttendanceHistory = () => {
     allDays.forEach(day => {
       const dateStr = format(day, 'yyyy-MM-dd');
 
+      // Skip future days
+      if (dateStr > todayStr) return;
+
+      // Approved leave
       if (leaveRows.some(l => dateStr >= l.start_date && dateStr <= l.end_date)) {
         leave++;
         return;
       }
 
       const record = attendanceRows.find(a => a.day === dateStr);
+
+      // Today without check-in → pending (not absent)
+      if (dateStr === todayStr && !record) return;
 
       if (!record || record.attendance_type === 'absent') absent++;
       else if (record.attendance_type === 'full') present++;
@@ -119,15 +128,25 @@ const AttendanceHistory = () => {
 
   const getDayStatus = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
 
+    // Future days
+    if (dateStr > todayStr) return 'future';
+
+    // Approved leave
     if (leaves.some(l => dateStr >= l.start_date && dateStr <= l.end_date))
       return 'leave';
 
     const record = attendance.find(a => a.day === dateStr);
+
+    // Today but not checked in yet
+    if (!record && dateStr === todayStr) return 'pending';
+
     if (record?.attendance_type === 'full') return 'present';
     if (record?.attendance_type === 'half') return 'half';
 
-    return 'absent'; // ✅ future also absent
+    // Past day missed
+    return 'absent';
   };
 
   const getStatusColor = (status: string) => {
@@ -136,6 +155,8 @@ const AttendanceHistory = () => {
       case 'half': return 'bg-yellow-500';
       case 'leave': return 'bg-blue-500';
       case 'absent': return 'bg-red-400';
+      case 'pending': return 'bg-violet-500'; // ✅ violet
+      case 'future': return 'bg-gray-200';
       default: return 'bg-gray-200';
     }
   };
@@ -145,7 +166,7 @@ const AttendanceHistory = () => {
     end: endOfMonth(currentMonth),
   });
 
-  const weekDays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const offset = startOfMonth(currentMonth).getDay();
 
   /* ===================== UI ===================== */
@@ -167,13 +188,16 @@ const AttendanceHistory = () => {
         {/* MONTH NAV */}
         <Card>
           <CardContent className="p-4 flex justify-between items-center">
-            <Button variant="ghost" size="icon" onClick={() => setCurrentMonth(subMonths(currentMonth,1))}>
+            <Button variant="ghost" size="icon" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}>
               <ChevronLeft />
             </Button>
-            <h2 className="font-semibold">{format(currentMonth,'MMMM yyyy')}</h2>
-            <Button variant="ghost" size="icon"
-              onClick={() => setCurrentMonth(addMonths(currentMonth,1))}
-              disabled={isSameMonth(currentMonth,new Date())}>
+            <h2 className="font-semibold">{format(currentMonth, 'MMMM yyyy')}</h2>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+              disabled={isSameMonth(currentMonth, new Date())}
+            >
               <ChevronRight />
             </Button>
           </CardContent>
@@ -207,7 +231,7 @@ const AttendanceHistory = () => {
                 const status = getDayStatus(d);
                 return (
                   <div key={d.toISOString()} className="aspect-square flex flex-col items-center justify-center">
-                    <span className="text-xs">{format(d,'d')}</span>
+                    <span className="text-xs">{format(d, 'd')}</span>
                     <div className={`w-3 h-3 rounded-full ${getStatusColor(status)}`} />
                   </div>
                 );

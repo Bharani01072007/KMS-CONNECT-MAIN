@@ -41,8 +41,6 @@ import {
 
 /* ===================== TYPES ===================== */
 
-type AttendanceType = 'full' | 'half' | 'absent';
-
 interface AttendanceRecord {
   day: string;
   attendance_type: string | null;
@@ -107,6 +105,8 @@ const AdminAttendanceHistory = () => {
     let leave = 0;
     let absent = 0;
 
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+
     const allDays = eachDayOfInterval({
       start: startOfMonth(currentMonth),
       end: endOfMonth(currentMonth),
@@ -115,12 +115,19 @@ const AdminAttendanceHistory = () => {
     allDays.forEach(day => {
       const d = format(day, 'yyyy-MM-dd');
 
+      // Skip future days
+      if (d > todayStr) return;
+
+      // Approved leave
       if (leaveRows.some(l => d >= l.start_date && d <= l.end_date)) {
         leave++;
         return;
       }
 
       const r = attendanceRows.find(a => a.day === d);
+
+      // Today without check-in → pending (not absent)
+      if (d === todayStr && !r) return;
 
       if (!r || r.attendance_type === 'absent') absent++;
       else if (r.attendance_type === 'full') present++;
@@ -139,14 +146,23 @@ const AdminAttendanceHistory = () => {
 
   const getDayStatus = (date: Date) => {
     const d = format(date, 'yyyy-MM-dd');
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
 
+    // Future day
+    if (d > todayStr) return 'future';
+
+    // Approved leave
     if (leaves.some(l => d >= l.start_date && d <= l.end_date)) return 'leave';
 
     const r = attendance.find(a => a.day === d);
+
+    // Today but no attendance yet
+    if (!r && d === todayStr) return 'pending';
+
     if (r?.attendance_type === 'full') return 'present';
     if (r?.attendance_type === 'half') return 'half';
 
-    return 'absent'; // future included
+    return 'absent';
   };
 
   const getColor = (s: string) =>
@@ -156,6 +172,10 @@ const AdminAttendanceHistory = () => {
       ? 'bg-yellow-500'
       : s === 'leave'
       ? 'bg-blue-500'
+      : s === 'pending'
+      ? 'bg-violet-500'
+      : s === 'future'
+      ? 'bg-gray-200'
       : 'bg-red-400';
 
   const selectedAttendance = attendance.find(a => a.day === selectedDate);

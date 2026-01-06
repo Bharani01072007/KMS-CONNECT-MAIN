@@ -189,7 +189,7 @@ const AdminLeaves = () => {
       monthStart
     );
 
-    if (approvedCount >= 3) {
+    if (approvedCount >= 2) {
       setPendingLeave(leave);
       setShowWarning(true);
       return;

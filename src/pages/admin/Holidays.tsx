@@ -73,25 +73,30 @@ const AdminHolidays = () => {
     }
 
     setLoading(true);
-
-    const { error } = await supabase.from("holidays").insert({
-      holiday_date: date,
-      description: description || null,
-    });
-
-    if (error) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
+    try {
+      const { error } = await supabase.from("holidays").insert({
+        holiday_date: date,
+        description: description || null,
       });
-    } else {
+
+      if (error) throw error;
+      const { error: applyError}=await supabase.rpc(
+        "apply_company_holiday_attendance",
+        {p_holiday:date}
+    );
+      if (applyError) throw applyError;
       toast({ title: "Company holiday added" });
       setDate("");
       setDescription("");
+    } catch (err: any) {
+     toast({
+        title: "Error",
+        description: err.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   /* ===================== DELETE ===================== */

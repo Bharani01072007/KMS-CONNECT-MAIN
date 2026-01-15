@@ -36,6 +36,13 @@ interface LeaveRecord {
   end_date: string;
 }
 
+interface holidayRecord {
+  holiday_date: string;
+  description?: string | null;
+  
+}
+const [holidays, setHolidays] = useState<holidayRecord[]>([]);
+
 /* ===================== COMPONENT ===================== */
 
 const AttendanceHistory = () => {
@@ -93,12 +100,23 @@ const AttendanceHistory = () => {
       start: startOfMonth(currentMonth),
       end: endOfMonth(currentMonth),
     });
+    const { data: holidayData } = await supabase
+          .from('holidays')
+          .select('holiday_date')
+          .gte('holiday_date', start)
+          .lte('holiday_date', end);
+    
+        setHolidays(holidayData ?? []);
 
     allDays.forEach(day => {
       const dateStr = format(day, 'yyyy-MM-dd');
 
       // Skip future days
       if (dateStr > todayStr) return;
+      if (holidayData?.some(h => h.holiday_date === dateStr)) {
+        leave++;
+        return;
+      }
 
       // Approved leave
       if (leaveRows.some(l => dateStr >= l.start_date && dateStr <= l.end_date)) {
@@ -132,6 +150,8 @@ const AttendanceHistory = () => {
 
     // Future days
     if (dateStr > todayStr) return 'future';
+
+    if (holidays.some(h => h.holiday_date === dateStr)) return 'leave';
 
     // Approved leave
     if (leaves.some(l => dateStr >= l.start_date && dateStr <= l.end_date))

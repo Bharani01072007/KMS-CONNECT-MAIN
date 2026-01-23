@@ -97,15 +97,15 @@ const AdminLeaves = () => {
     const nextMonth = new Date(monthStart);
     nextMonth.setMonth(nextMonth.getMonth() + 1);
 
-    const { count } = await supabase
+    const { data } = await supabase
       .from("leaves")
-      .select("*", { count: "exact", head: true })
+      .select('days')
       .eq("emp_user_id", empUserId)
       .eq("status", "approved")
       .gte("start_date", monthStart)
       .lt("start_date", nextMonth.toISOString().slice(0, 10));
 
-    return count || 0;
+    return data?.reduce((sum,l) => sum + (l.days || 0), 0) || 0;
   };
 
   const calculateLeaveCounts = async (leaves: LeaveRequest[]) => {
@@ -145,15 +145,14 @@ const AdminLeaves = () => {
     setIsUpdating(leaveId);
 
     try {
-      const { error } = await supabase
-        .from("leaves")
-        .update({ status: "approved" })
-        .eq("id", leaveId);
+      const { error } = await supabase.rpc("approve_leave_with_deduction",{
+        p_leave_id: leaveId
+      });
+   
 
       if (error) throw error;
 
-      const leave =
-        pendingLeave || leaves.find((l) => l.id === leaveId);
+      const leave = pendingLeave || leaves.find((l) => l.id === leaveId);
 
       if (leave) {
         await sendLeaveNotification(
@@ -382,8 +381,7 @@ const AdminLeaves = () => {
               Salary Deduction Warning
             </DialogTitle>
             <DialogDescription>
-              This is the <strong>4th leave</strong> for this employee in the
-              current month. Approving this leave will deduct:
+              This leave exceeds the <strong>2 free leave days</strong> for this month Approving this leave will result in a salary deduction:
             </DialogDescription>
           </DialogHeader>
 

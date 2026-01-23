@@ -58,13 +58,13 @@ interface holidayRecord {
   description?: string | null;
 }
 
-const [holidays, setHolidays] = useState<holidayRecord[]>([]);
+
 
 /* ===================== COMPONENT ===================== */
 
 const AdminAttendanceHistory = () => {
   const { employeeId } = useParams<{ employeeId: string }>();
-
+  const [holidays, setHolidays] = useState<holidayRecord[]>([]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);

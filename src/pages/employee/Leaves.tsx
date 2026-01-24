@@ -97,7 +97,7 @@ const EmployeeLeaves = () => {
       ? eachDayOfInterval({ start: range.from, end: range.to })
       : [];
 
-  const unpaidDays = Math.max(0, selectedDays.length - 2);
+  const unpaidDays = Math.max(0, approvedThisMonth + selectedDays.length - 2);
 
   /* ===================== SUBMIT ===================== */
 

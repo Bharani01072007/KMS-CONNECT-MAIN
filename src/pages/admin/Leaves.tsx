@@ -117,7 +117,7 @@ const AdminLeaves = () => {
         leave.emp_user_id,
         monthStart
       );
-      counts[leave.id] = approvedCount + 1;
+      counts[leave.id] = approvedCount + leave.days;
     }
 
     setLeaveCounts(counts);
@@ -188,7 +188,7 @@ const AdminLeaves = () => {
       monthStart
     );
 
-    if (approvedCount >= 2) {
+    if (approvedCount + leave.days > 2) {
       setPendingLeave(leave);
       setShowWarning(true);
       return;
@@ -310,22 +310,12 @@ const AdminLeaves = () => {
                       {leaveCounts[leave.id] && (
                         <Badge
                           variant={
-                            leaveCounts[leave.id] >= 4
+                            leaveCounts[leave.id] > 2
                               ? "destructive"
-                              : leaveCounts[leave.id] === 3
-                              ? "secondary"
                               : "outline"
                           }
                         >
-                          {leaveCounts[leave.id]}
-                          {leaveCounts[leave.id] === 1
-                            ? "st"
-                            : leaveCounts[leave.id] === 2
-                            ? "nd"
-                            : leaveCounts[leave.id] === 3
-                            ? "rd"
-                            : "th"}{" "}
-                          leave this month
+                          {leaveCounts[leave.id]} / 2 free leaves days used
                         </Badge>
                       )}
                     </div>
@@ -386,7 +376,7 @@ const AdminLeaves = () => {
           </DialogHeader>
 
           <div className="p-3 bg-muted rounded-lg text-center font-semibold text-red-600">
-            ₹{pendingLeave?.daily_wage || 0}
+            ₹{pendingLeave?.days ? pendingLeave.days * (pendingLeave.daily_wage || 0) : 0} will be deducted from the employee's salary.
           </div>
 
           <DialogFooter>

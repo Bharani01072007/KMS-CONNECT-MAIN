@@ -116,12 +116,26 @@ const AdminHolidays = () => {
   /* ===================== DELETE ===================== */
 
   const deleteHoliday = async (id: string) => {
-    const { error } = await supabase.from("holidays").delete().eq("id", id);
+    try{
+      const {data}=await supabase.from("holidays").select("holiday_date").eq("id",id).single();
+      if(!data) throw new Error("Holiday not found");
+      const date=data.holiday_date;
+      const {error:revertError}=await supabase.rpc('revert_company_holiday_attendance',{p_holiday: date});
+      if(revertError) throw revertError;
 
-    if (!error) {
-      toast({ title: "Holiday removed" });
+      const { error } = await supabase
+        .from("holidays")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+      toast({ title: "Holiday removed and salary reverted" });
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message,
+        variant: "destructive",
+      });
     }
-  };
 
   /* ===================== UI ===================== */
 
@@ -219,5 +233,6 @@ const AdminHolidays = () => {
     </div>
   );
 };
+}
 
 export default AdminHolidays;

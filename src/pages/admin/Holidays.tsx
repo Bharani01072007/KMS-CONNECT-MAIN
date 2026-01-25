@@ -137,6 +137,7 @@ const AdminHolidays = () => {
         variant: "destructive",
       });
     }
+  };
   
 
   /* ===================== UI ===================== */
@@ -235,6 +236,6 @@ const AdminHolidays = () => {
     </div>
   );
 };
-}
+
 
 export default AdminHolidays;

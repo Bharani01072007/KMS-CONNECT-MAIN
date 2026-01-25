@@ -115,7 +115,8 @@ const AdminHolidays = () => {
 
   /* ===================== DELETE ===================== */
 
-  const deleteHoliday = async (id: string) => {
+  const deleteHoliday = async (id: string) => 
+  {
     try{
       const {data}=await supabase.from("holidays").select("holiday_date").eq("id",id).single();
       if(!data) throw new Error("Holiday not found");
@@ -136,6 +137,7 @@ const AdminHolidays = () => {
         variant: "destructive",
       });
     }
+  
 
   /* ===================== UI ===================== */
 

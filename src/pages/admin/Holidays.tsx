@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
-import { Calendar, Trash2, Plus } from "lucide-react";
-import { format } from "date-fns";
+import { Calendar as CalendarIcon, Trash2, Plus } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { format, eachDayOfInterval } from "date-fns";
+import type { DateRange } from "react-day-picker";
 
 /* ===================== TYPES ===================== */
 
@@ -21,7 +23,7 @@ interface Holiday {
 
 const AdminHolidays = () => {
   const [holidays, setHolidays] = useState<Holiday[]>([]);
-  const [date, setDate] = useState("");
+  const [range, setRange] = useState<DateRange | undefined>();
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -61,35 +63,47 @@ const AdminHolidays = () => {
     if (data) setHolidays(data);
   };
 
-  /* ===================== ADD ===================== */
+  /* ===================== ADD (RANGE SUPPORT) ===================== */
 
   const addHoliday = async () => {
-    if (!date) {
+    if (!range?.from || !range?.to) {
       toast({
-        title: "Please select a date",
+        title: "Please select a date range",
         variant: "destructive",
       });
       return;
     }
 
-    setLoading(true);
-    try {
-      const { error } = await supabase.from("holidays").insert({
-        holiday_date: date,
-        description: description || null,
-      });
+    const days = eachDayOfInterval({
+      start: range.from,
+      end: range.to,
+    });
 
+    setLoading(true);
+
+    try {
+      const rows = days.map((d) => ({
+        holiday_date: format(d, "yyyy-MM-dd"),
+        description: description || null,
+      }));
+
+      const { error } = await supabase.from("holidays").insert(rows);
       if (error) throw error;
-      const { error: applyError}=await supabase.rpc(
-        "apply_company_holiday_attendance",
-        {p_holiday:date}
-    );
-      if (applyError) throw applyError;
-      toast({ title: "Company holiday added" });
-      setDate("");
+
+      /* 🔥 Apply attendance logic for EACH holiday */
+      for (const d of days) {
+        const { error: applyError } = await supabase.rpc(
+          "apply_company_holiday_attendance",
+          { p_holiday: format(d, "yyyy-MM-dd") }
+        );
+        if (applyError) throw applyError;
+      }
+
+      toast({ title: "Company holidays added" });
+      setRange(undefined);
       setDescription("");
     } catch (err: any) {
-     toast({
+      toast({
         title: "Error",
         description: err.message,
         variant: "destructive",
@@ -102,10 +116,7 @@ const AdminHolidays = () => {
   /* ===================== DELETE ===================== */
 
   const deleteHoliday = async (id: string) => {
-    const { error } = await supabase
-      .from("holidays")
-      .delete()
-      .eq("id", id);
+    const { error } = await supabase.from("holidays").delete().eq("id", id);
 
     if (!error) {
       toast({ title: "Holiday removed" });
@@ -130,13 +141,21 @@ const AdminHolidays = () => {
 
           <CardContent className="space-y-4">
             <div>
-              <Label>Date</Label>
-              <Input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
+              <Label>Select Date Range</Label>
+              <Calendar
+                mode="range"
+                selected={range}
+                onSelect={setRange}
+                numberOfMonths={1}
               />
             </div>
+
+            {range?.from && (
+              <p className="text-sm text-muted-foreground">
+                Selected: {format(range.from, "PPP")} →{" "}
+                {range.to ? format(range.to, "PPP") : ""}
+              </p>
+            )}
 
             <div>
               <Label>Description (optional)</Label>
@@ -157,7 +176,7 @@ const AdminHolidays = () => {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Calendar className="h-5 w-5" />
+              <CalendarIcon className="h-5 w-5" />
               Holiday List
             </CardTitle>
           </CardHeader>

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { startOfMonth, endOfMonth } from 'date-fns';
+import { format } from 'date-fns';
 
 const PAID_LEAVE_LIMIT = 2;
 
@@ -76,9 +77,10 @@ const EmployeeDashboard = () => {
     setApprovedLeavesThisMonth(count ?? 0);
 
     // Ledger balance
+    const monthStartFormatted = format(new Date(), 'yyyy-MM-01');
     const { data: balanceData, error } = await supabase.rpc('get_employee_ledger_balance', {
       p_emp_user_id: user.id,
-      p_month_year: monthStart
+      p_month_year: monthStartFormatted
     });
 
     setBalance(Number(balanceData?.[0]?.balance ?? 0));

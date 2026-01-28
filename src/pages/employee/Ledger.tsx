@@ -28,7 +28,7 @@ const EmployeeLedger = () => {
       p_month_year: monthStart
     });
 
-    setBalance(Number(balanceData ?? 0));
+    setBalance(Number(balanceData?.[0]?.balance ?? 0));
 
     const { data } = await supabase
       .from('money_ledger')

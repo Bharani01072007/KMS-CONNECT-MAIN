@@ -81,7 +81,7 @@ const EmployeeDashboard = () => {
       p_month_year: monthStart
     });
 
-    setBalance(data ?? 0);
+    setBalance(Number(data?.[0]?.balance ?? 0));
   };
 
   /* ===================== REALTIME ===================== */

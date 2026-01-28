@@ -21,11 +21,13 @@ const EmployeeLedger = () => {
 
   const fetchData = async () => {
     if (!user) return;
+    const monthStart = format(new Date(), 'yyyy-MM-01');
 
     const { data: total } = await supabase
       .from('v_ledger_totals')
       .select('balance')
       .eq('emp_user_id', user.id)
+      .eq('month_year', monthStart)
       .maybeSingle();
 
     setBalance(Number(total?.balance ?? 0));

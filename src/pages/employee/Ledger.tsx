@@ -23,14 +23,12 @@ const EmployeeLedger = () => {
     if (!user) return;
     const monthStart = format(new Date(), 'yyyy-MM-01');
 
-    const { data: total } = await supabase
-      .from('v_ledger_totals')
-      .select('balance')
-      .eq('emp_user_id', user.id)
-      .eq('month_year', monthStart)
-      .maybeSingle();
+    const { data: balanceData, error } = await supabase.rpc('get_employee_ledger_balance', {
+      p_emp_user_id: user.id,
+      p_month_year: monthStart
+    });
 
-    setBalance(Number(total?.balance ?? 0));
+    setBalance(Number(balanceData ?? 0));
 
     const { data } = await supabase
       .from('money_ledger')

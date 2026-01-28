@@ -76,13 +76,12 @@ const EmployeeDashboard = () => {
     setApprovedLeavesThisMonth(count ?? 0);
 
     // Ledger balance
-    const { data: ledger } = await supabase
-      .from('v_ledger_totals')
-      .select('balance')
-      .eq('emp_user_id', user.id)
-      .maybeSingle();
+    const { data,error } = await supabase.rpc('get_employee_ledger_balance', {
+      p_emp_user_id: user.id,
+      p_month_year: monthStart
+    });
 
-    setBalance(ledger?.balance ?? 0);
+    setBalance(data ?? 0);
   };
 
   /* ===================== REALTIME ===================== */

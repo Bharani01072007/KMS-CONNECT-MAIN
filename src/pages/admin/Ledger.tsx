@@ -90,14 +90,13 @@ const AdminLedger = () => {
 
     setEntries(data || []);
 
-    const { data: total } = await supabase
-      .from('v_ledger_totals')
-      .select('balance')
-      .eq('emp_user_id', selectedEmployee)
-      .eq('month_year', format(selectedMonth,'yyyy-MM-01'))
-      .maybeSingle();
+    const { data: balanceData } = await supabase.rpc('get_employee_ledger_balance', {
+      p_emp_user_id: selectedEmployee,
+      p_month_year: format(selectedMonth, 'yyyy-MM-01')
+    });
 
-    setBalance(Number(total?.balance ?? 0));
+    setBalance(Number(balanceData?.[0]?.balance ?? 0));
+
   };
 
   /* ===================== 🔴 REALTIME (ONLY ADDITION) ===================== */

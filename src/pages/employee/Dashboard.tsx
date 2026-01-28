@@ -76,7 +76,7 @@ const EmployeeDashboard = () => {
     setApprovedLeavesThisMonth(count ?? 0);
 
     // Ledger balance
-    const { data,error } = await supabase.rpc('get_employee_ledger_balance', {
+    const { data } = await supabase.rpc('get_employee_ledger_balance', {
       p_emp_user_id: user.id,
       p_month_year: monthStart
     });

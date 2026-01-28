@@ -28,7 +28,7 @@ const EmployeeLedger = () => {
       .select('balance')
       .eq('emp_user_id', user.id)
       .eq('month_year', monthStart)
-      .maybeSingle();
+      .single();
 
     setBalance(Number(total?.balance ?? 0));
 

@@ -19,6 +19,7 @@ interface Message {
   sender_id: string;
   recipient_id: string;
   created_at: string;
+  thread_id: string;
   pending?: boolean;
 }
 
@@ -84,7 +85,8 @@ const AdminChat = () => {
       const tId = getThreadId(user.id, employeeId);
       setThreadId(tId);
 
-      /* ✅ REALTIME SUBSCRIBE FIRST */
+
+      /* ✅ REALTIME FIRST */
       channelRef.current = supabase
         .channel(`chat-${tId}`)
         .on(
@@ -93,10 +95,14 @@ const AdminChat = () => {
             event: "INSERT",
             schema: "public",
             table: "messages",
-            filter: `thread_id=eq.${tId}`,
+            filter: `recipient_id=eq.${user.id}`,
           },
           (payload) => {
             const msg = payload.new as Message;
+
+            // extra safety: only accept this thread
+            if (msg.thread_id !== tId) return;
+
             setMessages((prev) =>
               prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
             );
@@ -153,6 +159,7 @@ const AdminChat = () => {
         sender_id: user.id,
         recipient_id: employeeId,
         created_at: new Date().toISOString(),
+        thread_id: threadId,
         pending: true,
       },
     ]);

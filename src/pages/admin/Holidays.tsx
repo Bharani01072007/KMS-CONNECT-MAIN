@@ -90,15 +90,6 @@ const AdminHolidays = () => {
       const { error } = await supabase.from("holidays").insert(rows);
       if (error) throw error;
 
-      /* 🔥 Apply attendance logic for EACH holiday */
-      for (const d of days) {
-        const { error: applyError } = await supabase.rpc(
-          "apply_company_holiday_attendance",
-          { p_holiday: format(d, "yyyy-MM-dd") }
-        );
-        if (applyError) throw applyError;
-      }
-
       toast({ title: "Company holidays added" });
       setRange(undefined);
       setDescription("");
@@ -118,12 +109,6 @@ const AdminHolidays = () => {
   const deleteHoliday = async (id: string) => 
   {
     try{
-      const {data}=await supabase.from("holidays").select("holiday_date").eq("id",id).single();
-      if(!data) throw new Error("Holiday not found");
-      const date=data.holiday_date;
-      const {error:revertError}=await supabase.rpc('revert_company_holiday_attendance',{p_holiday: date});
-      if(revertError) throw revertError;
-
       const { error } = await supabase
         .from("holidays")
         .delete()

@@ -151,7 +151,10 @@ const EmployeeAttendance = () => {
     try {
       const { error } = await supabase
         .from('attendance')
-        .update({ checkout_at: new Date().toISOString() })
+        .update({ checkout_at: new Date().toISOString(),
+          remarks: summary.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
         .eq('id', todayAttendance.id);
 
       if (error) throw error;

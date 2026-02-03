@@ -27,6 +27,7 @@ import {
   Megaphone,
   CalendarDays,
   IndianRupee,
+  Trash2,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
@@ -42,6 +43,7 @@ interface DashboardStats {
 }
 
 interface LatestAnnouncement {
+  id: string;
   body: string | null;
   created_at: string | null;
 }
@@ -58,8 +60,8 @@ const AdminDashboard = () => {
     openComplaints: 0,
     todayAttendance: 0,
   });
-
-  const [announcement, setAnnouncement] = useState('');
+  const[announcement,setAnnouncement]= useState('');
+  const [announcements, setAnnouncements] = useState<LatestAnnouncement[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [latestAnnouncement, setLatestAnnouncement] =
     useState<LatestAnnouncement | null>(null);
@@ -102,21 +104,24 @@ const AdminDashboard = () => {
     });
   };
 
-  const fetchLatestAnnouncement = async () => {
+  const fetchAnnouncements = async () => {
     const { data } = await supabase
       .from('notifications')
-      .select('body, created_at')
+      .select('id,body, created_at')
       .eq('title', 'Announcement')
       .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (data) setLatestAnnouncement(data);
+    if (data?.length){
+      setAnnouncements(data);
+      setLatestAnnouncement(data[0]);
+    }else{
+      setAnnouncements([]);
+      setLatestAnnouncement(null);
+    }
   };
 
   const refreshAll = () => {
     fetchStats();
-    fetchLatestAnnouncement();
+    fetchAnnouncements();
   };
 
   /* ===================== REALTIME (SUPABASE v2 SAFE) ===================== */
@@ -205,6 +210,28 @@ const AdminDashboard = () => {
       setIsSending(false);
     }
   };
+  const deleteAnnouncement = async (announcement: LatestAnnouncement) => {
+    const confirmDelete= confirm('Delete this announcement?');
+    if(!confirmDelete) return;
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('title', 'Announcement')
+      .eq('body', announcement.body);
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to delete announcement',
+        variant: 'destructive',
+      });
+      return;
+    }
+    toast({ title: 'Success', description: 'Announcement deleted' });
+    setAnnouncements(prev => prev.filter(a => a.body !== announcement.body));
+    setLatestAnnouncement(null);
+  };
+    
 
   /* ===================== UI ===================== */
 
@@ -268,13 +295,23 @@ const AdminDashboard = () => {
             </Button>
 
             {latestAnnouncement && (
-              <div className="p-3 bg-muted/50 rounded-lg">
-                <p className="text-xs text-muted-foreground">Latest Announcement</p>
-                <p className="text-sm">{latestAnnouncement.body}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {latestAnnouncement.created_at &&
-                    format(new Date(latestAnnouncement.created_at), 'PPp')}
-                </p>
+              <div className="p-3 bg-muted/50 rounded-lg flex justify-between items-start">
+                <div>
+                  <p className="text-xs text-muted-foreground">Latest Announcement</p>
+                  <p className="text-sm">{latestAnnouncement.body}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {latestAnnouncement.created_at &&
+                      format(new Date(latestAnnouncement.created_at), 'PPp')}
+                  </p>
+                </div>
+
+                <Button
+                  variant="destructive"
+                  size="icon"
+                  onClick={() => deleteAnnouncement(latestAnnouncement)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
               </div>
             )}
           </CardContent>

@@ -67,8 +67,8 @@ const EmployeeProfile = () => {
     setFormData({
       name: profile?.full_name || '',
       avatar_url: profile?.avatar_url || null,
-      daily_wage: employee?.daily_wage || 0,
-      site_name: (employee?.sites as any)?.name || null,
+      daily_wage: Number(employee?.daily_wage) || 0,
+      site_name: employee?.sites?.name ?? 'Not assigned',
     });
 
     setIsLoading(false);
@@ -249,12 +249,7 @@ const EmployeeProfile = () => {
           </CardHeader>
           <CardContent>
             <Label>Name</Label>
-            <Input
-              value={formData.name}
-              onChange={(e) =>
-                setFormData({ ...formData, name: e.target.value })
-              }
-            />
+            <Input value={formData.name} disabled/>
           </CardContent>
         </Card>
 
@@ -278,12 +273,10 @@ const EmployeeProfile = () => {
         </Card>
 
         <Button
-          onClick={handleSave}
-          disabled={isSaving}
           size="lg"
           className="w-full"
-        >
-          {isSaving ? 'Saving...' : 'Save Profile'}
+          disabled>
+          Profile editing is disabled
         </Button>
       </main>
     </div>

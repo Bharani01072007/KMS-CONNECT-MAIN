@@ -17,34 +17,42 @@ export default defineConfig(({ mode }) => ({
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg", "robots.txt"],
-      manifest: {
-        name: "KMS & Co Workforce Management",
-        short_name: "KMS Workforce",
-        description: "Workforce management system for KMS & Co",
-        theme_color: "#C1121F",
-        background_color: "#ffffff",
-        display: "standalone",
-        start_url: "/",
-        icons: [
+      workbox:{
+        runtimeCaching:[
           {
-            src: "/icons/icon-192.png",
-            sizes: "192x192",
-            type: "image/png",
-          },
-          {
-            src: "/icons/icon-512.png",
-            sizes: "512x512",
-            type: "image/png",
-          },
-          {
-            src: "/icons/icon-512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "any maskable",
-          },
-        ],
+            urlPattern: ({url}) =>
+              url.hostname.includes("supabase")|| url.pathname.includes("/rest/v1/") ,
+            handler: "NetworkFirst",},
+        ],     
       },
-    }),
+      manifest: {
+          name: "KMS & Co Workforce Management",
+          short_name: "KMS Workforce",
+          description: "Workforce management system for KMS & Co",
+          theme_color: "#C1121F",
+          background_color: "#ffffff",
+          display: "standalone",
+          start_url: "/",
+          icons: [
+            {
+              src: "/icons/icon-192.png",
+              sizes: "192x192",
+              type: "image/png",
+            },
+            {
+              src: "/icons/icon-512.png",
+              sizes: "512x512",
+              type: "image/png",
+            },
+            {
+              src: "/icons/icon-512.png",
+              sizes: "512x512",
+              type: "image/png",
+              purpose: "any maskable",
+            },
+          ],
+        },
+      }),
   ].filter(Boolean),
 
   resolve: {

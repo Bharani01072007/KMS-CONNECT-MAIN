@@ -14,6 +14,7 @@ interface AttendanceRecord {
   checkin_at: string | null;
   checkout_at: string | null;
   attendance_type?: 'full' | 'half' | null;
+  remarks?: string | null;
 }
 
 /* ===================== REALTIME HOOK ===================== */
@@ -93,6 +94,44 @@ const AttendanceScan = () => {
   }, [user]);
 
   useRealtimeAttendance(user?.id ?? null, fetchTodayAttendance);
+  useEffect(() => {
+    if (!user) return;
+
+    const html5QrCode = new Html5Qrcode("qr-reader");
+    scannerRef.current = html5QrCode;
+
+    html5QrCode
+      .start(
+        { facingMode: "environment" }, // back camera
+        {
+          fps: 10,
+          qrbox: { width: 250, height: 250 },
+        },
+        async (decodedText) => {
+          // decodedText = site_id from QR
+          await html5QrCode.stop();
+          await processAttendance(decodedText);
+        },
+        () => {}
+      )
+      .catch((err) => {
+        toast({
+          title: "Camera Error",
+          description: "Camera permission denied or not available",
+          variant: "destructive",
+        });
+        console.error(err);
+      });
+
+    return () => {
+      html5QrCode
+        .stop()
+        .catch(() => {})
+        .finally(() => {
+          html5QrCode.clear();
+        });
+    };
+  }, [user]);
 
   /* ===================== CORE ===================== */
 
@@ -145,6 +184,8 @@ const AttendanceScan = () => {
       .update({
         checkout_at: nowIST.toISOString(),
         attendance_type: attendanceType,
+        remarks: todayAttendance?.remarks ??null,
+        updated_at: new Date().toISOString(),
       })
       .eq('id', todayAttendance.id);
 
@@ -203,7 +244,6 @@ const AttendanceScan = () => {
   return (
     <div className="min-h-screen bg-background">
       <Header title="QR Attendance" backTo="/employee/attendance" />
-
       <main className="p-4 max-w-2xl mx-auto space-y-4">
         <Card>
           <CardContent className="pt-6 text-center">
@@ -211,7 +251,11 @@ const AttendanceScan = () => {
           </CardContent>
         </Card>
 
-        {/* 🔒 YOUR EXISTING QR SCANNER UI CONTINUES HERE */}
+        <Card>
+          <CardContent className="pt-6">
+            <div id="qr-reader" className="w-full max-w-sm mx-auto" />
+          </CardContent>
+        </Card>
       </main>
     </div>
   );

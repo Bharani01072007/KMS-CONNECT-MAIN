@@ -29,27 +29,6 @@ const AdminHolidays = () => {
 
   useEffect(() => {
     fetchHolidays();
-
-    /* ===================== 🔴 REALTIME ===================== */
-
-    const channel = supabase
-      .channel("admin-holidays-realtime")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "holidays",
-        },
-        () => {
-          fetchHolidays();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, []);
 
   /* ===================== FETCH ===================== */
@@ -82,17 +61,19 @@ const AdminHolidays = () => {
     setLoading(true);
 
     try {
-      const rows = days.map((d) => ({
-        holiday_date: format(d, "yyyy-MM-dd"),
-        description: description || null,
-      }));
-
-      const { error } = await supabase.from("holidays").insert(rows);
-      if (error) throw error;
+      for (const d of days){
+        const { error } = await supabase.from("holidays").insert({
+          holiday_date: format(d, "yyyy-MM-dd"),
+          description: description || null,
+        });
+      
+        if (error) throw error;
+      }
 
       toast({ title: "Company holidays added" });
       setRange(undefined);
       setDescription("");
+      await fetchHolidays();
     } catch (err: any) {
       toast({
         title: "Error",
@@ -115,6 +96,7 @@ const AdminHolidays = () => {
         .eq("id", id);
       if (error) throw error;
       toast({ title: "Holiday removed and salary reverted" });
+      await fetchHolidays();
     } catch (err: any) {
       toast({
         title: "Error",

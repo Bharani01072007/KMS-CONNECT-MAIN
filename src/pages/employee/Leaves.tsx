@@ -271,7 +271,7 @@ const EmployeeLeaves = () => {
                 </p>
                 {unpaidDays > 0 && (
                   <p className="text-destructive">
-                    Unpaid days: <strong>{unpaidDays}</strong>
+                    Unpaid days: <strong>{unpaidDays-1}</strong>
                   </p>
                 )}
               </div>

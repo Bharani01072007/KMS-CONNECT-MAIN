@@ -44,7 +44,7 @@ interface LeaveRequest {
 
 const AdminLeaves = () => {
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
-  const [leaveCounts, setLeaveCounts] = useState<Record<string, number>>({});
+  const [monthlyApproved, setMonthlyApproved] = useState<Record<string, Record<string, number>>>({});
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
 
   const [showWarning, setShowWarning] = useState(false);
@@ -85,43 +85,24 @@ const AdminLeaves = () => {
     }));
 
     setLeaves(enriched);
-    calculateLeaveCounts(enriched);
+    setMonthlyApproved(buildMonthlyApprovedMap(enriched));
   };
 
   /* ===================== LEAVE COUNT PER MONTH ===================== */
 
-  const getApprovedLeavesThisMonth = async (
-    empUserId: string,
-    monthStart: string
-  ) => {
-    const nextMonth = new Date(monthStart);
-    nextMonth.setMonth(nextMonth.getMonth() + 1);
-
-    const { data } = await supabase
-      .from("leaves")
-      .select('days')
-      .eq("emp_user_id", empUserId)
-      .eq("status", "approved")
-      .gte("start_date", monthStart)
-      .lt("start_date", nextMonth.toISOString().slice(0, 10));
-
-    return data?.reduce((sum,l) => sum + (l.days || 0), 0) || 0;
-  };
-
-  const calculateLeaveCounts = async (leaves: LeaveRequest[]) => {
-    const counts: Record<string, number> = {};
-
+  const buildMonthlyApprovedMap = (leaves: LeaveRequest[]) => {
+    const map: Record<string, Record<string, number>> = {};
     for (const leave of leaves) {
-      const monthStart = leave.start_date.slice(0, 7) + "-01";
-      const approvedCount = await getApprovedLeavesThisMonth(
-        leave.emp_user_id,
-        monthStart
-      );
-      counts[leave.id] = approvedCount + leave.days;
+      if (leave.status !== "approved") continue;
+      const empid=leave.emp_user_id;
+      const month = leave.start_date.slice(0, 7);
+      if(!map[empid]) map[empid]={};
+      if(!map[empid][month]) map[empid][month]=0;
+      map[empid][month]+=leave.days;
     }
-
-    setLeaveCounts(counts);
+    return map;  
   };
+
 
   /* ===================== SAFE NOTIFICATION ===================== */
 
@@ -181,19 +162,20 @@ const AdminLeaves = () => {
   };
 
   const handleApproveClick = async (leave: LeaveRequest) => {
-    const monthStart = leave.start_date.slice(0, 7) + "-01";
+    const month = leave.start_date.slice(0, 7); // yyyy-MM
+    const approvedSoFar =
+      monthlyApproved[leave.emp_user_id]?.[month] ?? 0;
+    const paidLeft = Math.max(0, 2 - approvedSoFar);
+    const unpaidDays = Math.max(0, leave.days - paidLeft);
 
-    const approvedCount = await getApprovedLeavesThisMonth(
-      leave.emp_user_id,
-      monthStart
-    );
-
-    if (approvedCount + leave.days > 2) {
-      setPendingLeave(leave);
+    if (unpaidDays >0){
+      setPendingLeave({
+        ...leave,
+        unpaidDays,
+      }as LeaveRequest & {unpaidDays:number});
       setShowWarning(true);
       return;
     }
-
     approveLeave(leave.id);
   };
 
@@ -263,6 +245,27 @@ const AdminLeaves = () => {
   const pendingCount = leaves.filter(
     (l) => l.status === "pending"
   ).length;
+  /* ===================== SALARY DEDUCTION CALC ===================== */
+
+  const unpaidDays = (pendingLeave as (LeaveRequest & { unpaidDays: number }) | null)?.unpaidDays ?? 0;
+
+  const deductionAmount = unpaidDays * (pendingLeave?.daily_wage ?? 0);
+  const isLatestApprovedInMonth = (
+    leave: LeaveRequest,
+    allLeaves: LeaveRequest[]
+  ) => {
+    const month = leave.start_date.slice(0, 7);
+
+    return (
+      leave.status === "approved" &&
+      allLeaves.find(
+        (l) =>
+          l.emp_user_id === leave.emp_user_id &&
+          l.status === "approved" &&
+          l.start_date.slice(0, 7) === month
+      )?.id === leave.id
+    );
+  };
 
   /* ===================== UI ===================== */
 
@@ -307,17 +310,16 @@ const AdminLeaves = () => {
 
                       {getStatusBadge(leave.status)}
 
-                      {leaveCounts[leave.id] && (
-                        <Badge
-                          variant={
-                            leaveCounts[leave.id] > 2
-                              ? "destructive"
-                              : "outline"
-                          }
-                        >
-                          {leaveCounts[leave.id]} / 2 free leaves days used
-                        </Badge>
-                      )}
+                      {isLatestApprovedInMonth(leave,leaves) && (() => {
+                        const month = leave.start_date.slice(0, 7);
+                        const usedDays =
+                          monthlyApproved[leave.emp_user_id]?.[month] || 0;
+                        return (
+                          <Badge variant={usedDays > 2 ? "destructive" : "secondary"}>
+                            {usedDays} / 2 approved this month
+                          </Badge>
+                        );
+                      })()}
                     </div>
 
                     <p className="text-sm">
@@ -376,7 +378,7 @@ const AdminLeaves = () => {
           </DialogHeader>
 
           <div className="p-3 bg-muted rounded-lg text-center font-semibold text-red-600">
-            ₹{pendingLeave?.days ? pendingLeave.days * (pendingLeave.daily_wage || 0) : 0} will be deducted from the employee's salary.
+            ₹{deductionAmount} will be deducted from the employee's salary.
           </div>
 
           <DialogFooter>

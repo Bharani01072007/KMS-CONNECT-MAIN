@@ -98,31 +98,6 @@ const AdminLedger = () => {
     setBalance(Number(balanceData?.[0]?.balance ?? 0));
 
   };
-
-  /* ===================== 🔴 REALTIME (ONLY ADDITION) ===================== */
-
-  useEffect(() => {
-    if (!selectedEmployee) return;
-
-    const channel = supabase
-      .channel(`admin-ledger-${selectedEmployee}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'money_ledger',
-          filter: `emp_user_id=eq.${selectedEmployee}`,
-        },
-        () => {fetchLedger()}
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [selectedEmployee, selectedMonth]);
-
   /* ===================== MANUAL TRANSACTION ===================== */
 
   const handleAddTransaction = async () => {

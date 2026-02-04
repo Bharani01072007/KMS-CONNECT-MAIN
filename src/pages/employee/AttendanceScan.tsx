@@ -53,6 +53,7 @@ const useRealtimeAttendance = (
 const AttendanceScan = () => {
   const { user } = useAuth();
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const isProcessingRef = useRef(false);
     useEffect(() => {
       
     return () => {
@@ -175,10 +176,21 @@ const AttendanceScan = () => {
 
   const processAttendance = async (siteId: string) => {
     if (!user) return;
-    if (!isUuid(siteId)) {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+    try{
+      if (!isUuid(siteId)) {
+        toast({
+          title: 'Invalid QR Code',
+          description: 'The scanned QR code is not valid',
+          variant: 'destructive',
+        });
+        return;
+      }
+    if(todayAttendance) {
       toast({
-        title: 'Invalid QR Code',
-        description: 'The scanned QR code is not valid',
+        title: 'Attendance Already Completed',
+        description: 'You have already checked in today',
         variant: 'destructive',
       });
       return;
@@ -189,63 +201,30 @@ const AttendanceScan = () => {
       })
     );
 
-    /* 🔐 SINGLE-SCAN LOCK */
-    if (todayAttendance?.checkout_at) {
-      toast({
-        title: 'Attendance Completed',
-        description: 'You have already checked out today',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    /* -------- CHECK IN -------- */
-    if (!todayAttendance) {
-      const {  error: insertError } = await supabase.from('attendance').insert({
+    const {error} = await supabase
+      .from('attendance').insert({
         emp_user_id: user.id,
         site_id: siteId,
         day: today,
         checkin_at: nowIST.toISOString(),
       });
-      if (insertError) {
-        toast({
-          title: 'Check-In Failed',
-          description: insertError.message,
-          variant: 'destructive',
-        });
-        return;
-      }
-      await fetchTodayAttendance();
-      toast({ title: 'Checked In' });
+    if (error) {
+      toast({
+        title: 'Check-In Failed',
+        description: error.message,
+        variant: 'destructive',
+      });
       return;
     }
-
-    /* -------- CHECK OUT -------- */
-
-
-    const { error: updateError } = await supabase
-      .from('attendance')
-      .update({
-        checkout_at: nowIST.toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', todayAttendance.id);
-      if (updateError) {
-        toast({
-          title: 'Check-Out Failed',
-          description: updateError.message,
-          variant: 'destructive',
-        });
-        return;
-      }
-
     await fetchTodayAttendance();
-
-    toast({
-      title: 'Checked Out',
-      description:'Attendance process completed for today.',   
-    });
+    toast({ title: 'Checked In', description: 'You have successfully checked in.' });
+    } finally {
+      setTimeout(() => {
+        isProcessingRef.current = false;
+      }, 3000); // 3 seconds lock to prevent rapid scans
+    }
   };
+
 
   /* ===================== SALARY CREDIT (SAFE) ===================== */
 

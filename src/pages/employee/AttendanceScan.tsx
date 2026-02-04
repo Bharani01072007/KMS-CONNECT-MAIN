@@ -53,19 +53,19 @@ const useRealtimeAttendance = (
 const AttendanceScan = () => {
   const { user } = useAuth();
   const scannerRef = useRef<Html5Qrcode | null>(null);
-  useEffect(() => {
-  return () => {
-    if (scannerRef.current) {
-      scannerRef.current
-        .stop()
-        .catch(() => {})
-        .finally(() => {
-          scannerRef.current?.clear();
-          scannerRef.current = null;
-        });
-    }
-  };
-}, []);
+    useEffect(() => {
+    return () => {
+      if (scannerRef.current) {
+        scannerRef.current
+          .stop()
+          .catch(() => {})
+          .finally(() => {
+            scannerRef.current?.clear();
+            scannerRef.current = null;
+          });
+      }
+    };
+  }, []);
 
   const [todayAttendance, setTodayAttendance] =
     useState<AttendanceRecord | null>(null);
@@ -165,15 +165,6 @@ const AttendanceScan = () => {
 
   const processAttendance = async (siteId: string) => {
     if (!user) return;
-    if (!isUuid(siteId)) {
-      toast({
-        title: 'Invalid QR Code',
-        description: 'The scanned QR code is not valid',
-        variant: 'destructive',
-      });
-      return;
-    }
-
     const nowIST = new Date(
       new Date().toLocaleString('en-US', {
         timeZone: 'Asia/Kolkata',
@@ -207,6 +198,14 @@ const AttendanceScan = () => {
         return;
       }
       await fetchTodayAttendance();
+      if(!isUuid(siteId)){
+        toast({
+          title: 'Invalid QR Code',
+          description: 'The scanned QR code is not valid',
+          variant: 'destructive',
+        });
+        return;
+      }
 
       toast({ title: 'Checked In' });
       return;

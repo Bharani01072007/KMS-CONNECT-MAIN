@@ -5,6 +5,8 @@ import Header from '@/components/Header';
 import { Card, CardContent } from '@/components/ui/card';
 import { toast } from '@/hooks/use-toast';
 import { Html5Qrcode } from 'html5-qrcode';
+import { validate as isUuid} from 'uuid';
+
 
 /* ===================== TYPES ===================== */
 
@@ -137,6 +139,14 @@ const AttendanceScan = () => {
 
   const processAttendance = async (siteId: string) => {
     if (!user) return;
+    if (!isUuid(siteId)) {
+      toast({
+        title: 'Invalid QR Code',
+        description: 'The scanned QR code is not valid',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     const nowIST = new Date(
       new Date().toLocaleString('en-US', {
@@ -156,88 +166,55 @@ const AttendanceScan = () => {
 
     /* -------- CHECK IN -------- */
     if (!todayAttendance) {
-      await supabase.from('attendance').insert({
+      const {  error: insertError } = await supabase.from('attendance').insert({
         emp_user_id: user.id,
         site_id: siteId,
         day: today,
         checkin_at: nowIST.toISOString(),
       });
+      if (insertError) {
+        toast({
+          title: 'Check-In Failed',
+          description: insertError.message,
+          variant: 'destructive',
+        });
+        return;
+      }
+      await fetchTodayAttendance();
 
       toast({ title: 'Checked In' });
       return;
     }
 
     /* -------- CHECK OUT -------- */
-    const checkInTime = new Date(
-      new Date(todayAttendance.checkin_at!).toLocaleString('en-US', {
-        timeZone: 'Asia/Kolkata',
-      })
-    );
 
-    const isHalfDay =
-      checkInTime.getHours() > 10 || nowIST.getHours() < 13;
 
-    const attendanceType: 'full' | 'half' = isHalfDay ? 'half' : 'full';
-
-    await supabase
+    const { error: updateError } = await supabase
       .from('attendance')
       .update({
         checkout_at: nowIST.toISOString(),
-        attendance_type: attendanceType,
-        remarks: todayAttendance?.remarks ??null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', todayAttendance.id);
+      if (updateError) {
+        toast({
+          title: 'Check-Out Failed',
+          description: updateError.message,
+          variant: 'destructive',
+        });
+        return;
+      }
 
-    await creditDailyWage(attendanceType);
+    await fetchTodayAttendance();
 
     toast({
       title: 'Checked Out',
-      description:
-        attendanceType === 'half'
-          ? 'Half Day Salary Credited'
-          : 'Full Day Salary Credited',
+      description:'Attendance process completed for today.',   
     });
   };
 
   /* ===================== SALARY CREDIT (SAFE) ===================== */
 
-  const creditDailyWage = async (type: 'full' | 'half') => {
-    if (!user) return;
-
-    const reason = `Daily Wage (${type.toUpperCase()})`;
-
-    /* 🔄 DUPLICATE PREVENTION */
-    const { data: exists } = await supabase
-      .from('money_ledger')
-      .select('id')
-      .eq('emp_user_id', user.id)
-      .eq('month_year', monthYear)
-      .eq('reason', reason)
-      .maybeSingle();
-
-    if (exists) return;
-
-    const { data: emp } = await supabase
-      .from('employees')
-      .select('daily_wage')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (!emp?.daily_wage) return;
-
-    const amount =
-      type === 'full' ? emp.daily_wage : emp.daily_wage / 2;
-
-    await supabase.from('money_ledger').insert({
-      emp_user_id: user.id,
-      amount,
-      type: 'credit',
-      reason,
-      month_year: monthYear,
-      created_by: user.id,
-    });
-  };
 
   /* ===================== UI (UNCHANGED) ===================== */
 

@@ -87,52 +87,82 @@ const AdminChat = () => {
   useEffect(() => {
     if (!user || !threadId) return;
   
+    let unsubscribe: (() => void) | null = null;
 
     const init = async () => {
       setIsLoading(true);
-      /* ✅ REALTIME FIRST */
-      channelRef.current = supabase
-        .channel(`chat-${threadId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "messages",
-            filter: `thread_id=eq.${threadId}`,
-          },
-          (payload) => {
-            const msg = payload.new as Message;
-            setMessages((prev) =>
-              prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
-            );
-          }
-        )
-        .subscribe(async (status) => {
-          if (status === "SUBSCRIBED") {
-            /* ✅ FETCH EXISTING MESSAGES AFTER SUBSCRIPTION READY */
-            const { data } = await supabase
-              .from("messages")
-              .select("*")
-              .eq("thread_id", threadId)
-              .order("created_at", { ascending: true });
-            setMessages(data || []);
-            setIsLoading(false);
-          }
+      try {
+        /* ✅ LOAD MESSAGES FIRST */
+        const { data, error: fetchError } = await supabase
+          .from("messages")
+          .select("*")
+          .eq("thread_id", threadId)
+          .order("created_at", { ascending: true });
+
+        if (fetchError) {
+          console.error("Failed to fetch messages:", fetchError);
+          toast({
+            title: "Error",
+            description: "Failed to load messages",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        setMessages(data || []);
+
+        /* ✅ SETUP REALTIME - DO NOT UNSUBSCRIBE ON EFFECT CLEANUP */
+        console.log("🔧 Setting up realtime for thread:", threadId);
+        
+        const channel = supabase
+          .channel(`chat-${threadId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "messages",
+              filter: `thread_id=eq.${threadId}`,
+            },
+            (payload) => {
+              console.log("📨 New message received:", payload.new);
+              const msg = payload.new as Message;
+              setMessages((prev) =>
+                prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
+              );
+            }
+          )
+          .subscribe((status, err) => {
+            console.log(`✔️ Chat subscription status: ${status}`);
+            if (err) console.error("Subscription error:", err);
+          });
+
+        channelRef.current = channel;
+        unsubscribe = () => {
+          console.log("🔌 Removing channel:", threadId);
+          supabase.removeChannel(channel);
+        };
+      } catch (error) {
+        console.error("Chat init error:", error);
+        toast({
+          title: "Error",
+          description: "Failed to initialize chat",
+          variant: "destructive",
         });
+      } finally {
+        setIsLoading(false);
+      }
     };
 
     init();
 
-    /* ✅ CLEANUP (CRITICAL FIX) */
+    /* ✅ CLEANUP - Only on unmount */
     return () => {
-      
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
+      if (unsubscribe && channelRef.current) {
+        unsubscribe();
       }
     };
-  }, [threadId, user]);
+  }, [threadId]);
 
   /* ===================== AUTO SCROLL ===================== */
 

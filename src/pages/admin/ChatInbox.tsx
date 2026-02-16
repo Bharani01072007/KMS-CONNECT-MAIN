@@ -122,7 +122,9 @@ const AdminChatInbox = () => {
   /* ===================== REALTIME SUBSCRIPTION ===================== */
 
   const subscribeRealtime = (adminUserId: string) => {
-    channelRef.current = supabase
+    console.log("🔧 Setting up inbox realtime");
+    
+    const channel = supabase
       .channel("admin-chat-inbox")
       .on(
         "postgres_changes",
@@ -132,6 +134,7 @@ const AdminChatInbox = () => {
           table: "messages",
         },
         payload => {
+          console.log("📬 Inbox new message:", payload.new);
           const msg = payload.new as MessageRow;
           const otherUserId =
             msg.sender_id === adminUserId
@@ -170,11 +173,12 @@ const AdminChatInbox = () => {
           );
         }
       )
-      .subscribe((status) => {
-        if (status !== "SUBSCRIBED") {
-          console.warn("ChatInbox subscription status:", status);
-        }
+      .subscribe((status, err) => {
+        console.log(`✔️ ChatInbox subscription status: ${status}`);
+        if (err) console.error("Inbox subscription error:", err);
       });
+
+    channelRef.current = channel;
   };
 
   /* ===================== UI ===================== */

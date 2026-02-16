@@ -47,69 +47,102 @@ const EmployeeChat = () => {
     if (!user) return;
 
     let isMounted = true;
+    let unsubscribe: (() => void) | null = null;
 
     const init = async () => {
       setIsLoading(true);
 
-      const adminUid = await fetchAdmin();
-      if (!adminUid || !isMounted) return;
+      try {
+        const adminUid = await fetchAdmin();
+        if (!adminUid || !isMounted) return;
 
-      const tId = getThreadId(user.id, adminUid);
-      setAdminId(adminUid);
-      setThreadId(tId);
-    
-      /* ✅ REALTIME FIRST */
-      channelRef.current = supabase
-        .channel(`chat-${tId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "messages",
-            filter: `thread_id=eq.${tId}`,
-          },
-          (payload) => {
-            const msg = payload.new as Message;
-            if (!isMounted) return;
-            setMessages((prev) =>
-              prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
-            );
+        const tId = getThreadId(user.id, adminUid);
+        
+        if (!isMounted) return;
+        setAdminId(adminUid);
+        setThreadId(tId);
+
+        /* ✅ LOAD MESSAGES FIRST */
+        const { data: msgData, error: fetchError } = await supabase
+          .from("messages")
+          .select("*")
+          .eq("thread_id", tId)
+          .order("created_at", { ascending: true });
+
+        if (fetchError) {
+          console.error("Failed to fetch messages:", fetchError);
+          if (isMounted) {
+            toast({
+              title: "Error",
+              description: "Failed to load messages",
+              variant: "destructive",
+            });
           }
-        )
-        .subscribe(async (status) => {
-          if (status === "SUBSCRIBED" && isMounted) {
-            /* ✅ FETCH HISTORY AFTER SUBSCRIPTION READY */
-            const { data } = await supabase
-              .from("messages")
-              .select("*")
-              .eq("thread_id", tId)
-              .order("created_at", { ascending: true });
+          return;
+        }
 
-            if (isMounted) {
-              setMessages((prev) => {
-                const map = new Map(prev.map((m) => [m.id, m]));
-                (data || []).forEach((m) => map.set(m.id, m));
-                return Array.from(map.values()).sort(
-                  (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                );
-              });
-              setIsLoading(false);
+        if (isMounted) {
+          setMessages(msgData || []);
+        }
+
+        /* ✅ SETUP REALTIME - DO NOT UNSUBSCRIBE ON EFFECT CLEANUP */
+        console.log("🔧 Setting up realtime for thread:", tId);
+        
+        const channel = supabase
+          .channel(`chat-${tId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "messages",
+              filter: `thread_id=eq.${tId}`,
+            },
+            (payload) => {
+              console.log("📨 New message received:", payload.new);
+              if (!isMounted) return;
+              const msg = payload.new as Message;
+              setMessages((prev) =>
+                prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
+              );
             }
-          }
-        });
+          )
+          .subscribe((status, err) => {
+            console.log(`✔️ Chat subscription status: ${status}`);
+            if (err) console.error("Subscription error:", err);
+          });
+
+        channelRef.current = channel;
+        unsubscribe = () => {
+          console.log("🔌 Removing channel:", tId);
+          supabase.removeChannel(channel);
+        };
+      } catch (error) {
+        console.error("Chat init error:", error);
+        if (isMounted) {
+          toast({
+            title: "Error",
+            description: "Failed to initialize chat",
+            variant: "destructive",
+          });
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
     };
 
     init();
 
     return () => {
       isMounted = false;
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
+      // Only clean up on unmount, not on every effect re-run
+      if (unsubscribe && channelRef.current) {
+        unsubscribe();
       }
     };
-  }, [user, fetchAdmin]);
+  }, [user]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

@@ -58,7 +58,7 @@ const AdminChat = () => {
       .eq("user_id", employeeId)
       .maybeSingle();
 
-    if (error) {
+    if (error||!data) {
       toast({
         title: "Error",
         description: "Could not load employee info",
@@ -67,42 +67,42 @@ const AdminChat = () => {
       return;
     }
 
-    if (data) setEmployee(data);
+    setEmployee({
+      user_id: data.user_id,
+      full_name: data.full_name,
+      email: data.email,
+      avatar_url: data.avatar_url,
+    });
   }, [employeeId]);
 
   /* ===================== INIT ===================== */
-
   useEffect(() => {
-    if (!user || !employeeId) return;
-
-    let isMounted = true;
+    if(!user||!employee)return;
+      const tId = getThreadId(user.id, employee.user_id); 
+      setThreadId(tId);
+  }, [user, employee]);
+  useEffect(() => {
+    fetchEmployee();
+  }, [fetchEmployee]);
+  useEffect(() => {
+    if (!user || !threadId) return;
+  
 
     const init = async () => {
       setIsLoading(true);
-
-      await fetchEmployee();
-
-      const tId = getThreadId(user.id, employeeId);
-      setThreadId(tId);
-
-
       /* ✅ REALTIME FIRST */
       channelRef.current = supabase
-        .channel(`chat-${tId}`)
+        .channel(`chat-${threadId}`)
         .on(
           "postgres_changes",
           {
             event: "INSERT",
             schema: "public",
             table: "messages",
-            filter: `recipient_id=eq.${user.id}`,
+            filter: `thread_id=eq.${threadId}`,
           },
           (payload) => {
             const msg = payload.new as Message;
-
-            // extra safety: only accept this thread
-            if (msg.thread_id !== tId) return;
-
             setMessages((prev) =>
               prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
             );
@@ -114,26 +114,23 @@ const AdminChat = () => {
       const { data } = await supabase
         .from("messages")
         .select("*")
-        .eq("thread_id", tId)
+        .eq("thread_id", threadId)
         .order("created_at", { ascending: true });
-
-      if (isMounted) {
-        setMessages(data || []);
-        setIsLoading(false);
-      }
+      setMessages(data || []);
+      setIsLoading(false);
     };
 
     init();
 
     /* ✅ CLEANUP (CRITICAL FIX) */
     return () => {
-      isMounted = false;
+      
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
     };
-  }, [user, employeeId, fetchEmployee]);
+  }, [threadId]);
 
   /* ===================== AUTO SCROLL ===================== */
 
@@ -157,7 +154,7 @@ const AdminChat = () => {
         id: tempId,
         content,
         sender_id: user.id,
-        recipient_id: employeeId,
+        recipient_id: employee!.user_id,
         created_at: new Date().toISOString(),
         thread_id: threadId,
         pending: true,
@@ -171,7 +168,7 @@ const AdminChat = () => {
       .insert({
         thread_id: threadId,
         sender_id: user.id,
-        recipient_id: employeeId,
+        recipient_id: employee.user_id,
         content,
       })
       .select()

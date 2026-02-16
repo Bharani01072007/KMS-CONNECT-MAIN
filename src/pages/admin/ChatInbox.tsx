@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { MessageSquare, ChevronRight } from "lucide-react";
 import { format } from "date-fns";
+import { getThreadId } from "@/lib/thread";
 
 /* ===================== TYPES ===================== */
 
@@ -24,6 +25,7 @@ interface MessageRow {
   recipient_id: string;
   content: string;
   created_at: string;
+  thread_id: string;
 }
 
 /* ===================== COMPONENT ===================== */
@@ -75,17 +77,16 @@ const AdminChatInbox = () => {
 
       const { data: messages } = await supabase
         .from("messages")
-        .select("sender_id, recipient_id, content, created_at")
+        .select("sender_id, recipient_id, content, created_at,thread_id")
         .order("created_at", { ascending: false });
 
       const inbox: EmployeeWithMessage[] =
         empData?.map(emp => {
+          const threadId = getThreadId(adminUserId, emp.user_id);
           const related =
             messages?.filter(
               m =>
-                m.sender_id === emp.user_id ||
-                m.recipient_id === emp.user_id
-            ) || [];
+                m.thread_id === threadId) || [];
 
           const last = related[0];
 
@@ -132,14 +133,14 @@ const AdminChatInbox = () => {
         },
         payload => {
           const msg = payload.new as MessageRow;
-
+          const otherUserId =
+            msg.sender_id === adminUserId
+              ? msg.recipient_id
+              : msg.sender_id;
+          const threadId = getThreadId(adminUserId, otherUserId);
           // Only react to messages related to admin
-          if (
-            msg.sender_id !== adminUserId &&
-            msg.recipient_id !== adminUserId
-          ) {
-            return;
-          }
+          if (msg.thread_id !== threadId) return;
+          
 
           setEmployees(prev =>
             prev

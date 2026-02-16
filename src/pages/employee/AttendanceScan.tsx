@@ -1,11 +1,12 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import Header from '@/components/Header';
 import { Card, CardContent } from '@/components/ui/card';
 import { toast } from '@/hooks/use-toast';
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode';
 import { validate as isUuid} from 'uuid';
+
 
 
 /* ===================== TYPES ===================== */
@@ -47,6 +48,14 @@ const useRealtimeAttendance = (
     };
   }, [userId]);
 };
+const isAfterCutoffIST = () => {
+  const now = new Date(
+    new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })
+  );
+  const cutoff = new Date(now);
+  cutoff.setHours(14, 0, 0, 0); // 2:00 PM IST
+  return now > cutoff;
+};
 
 /* ===================== COMPONENT ===================== */
 
@@ -54,26 +63,13 @@ const AttendanceScan = () => {
   const { user } = useAuth();
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const isProcessingRef = useRef(false);
-    useEffect(() => {
-      
-    return () => {
-      if (scannerRef.current) {
-        scannerRef.current
-          .stop()
-          .catch(() => {})
-          .finally(() => {
-            scannerRef.current?.clear();
-            scannerRef.current = null;
-          });
-      }
-    };
-  }, []);
 
   const [todayAttendance, setTodayAttendance] =
     useState<AttendanceRecord | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
   const monthYear = today.slice(0, 7) + '-01';
+  const afterCutoff = useMemo(isAfterCutoffIST, []); // Helper function to determine if current time is after cutoff
 
   /* ===================== FETCH ===================== */
 
@@ -103,6 +99,23 @@ const AttendanceScan = () => {
           : null,
     });
   };
+  const safeStopScanner = async () => {
+  const scanner = scannerRef.current;
+  if (!scanner) return;
+
+  try {
+    const state = scanner.getState();
+    if (state === Html5QrcodeScannerState.SCANNING) {
+      await scanner.stop();
+    }
+  } catch {
+    // ignore safely
+  } finally {
+    scanner.clear();
+    scannerRef.current = null;
+  }
+};
+  
 
   /* ===================== REALTIME ===================== */
 
@@ -113,14 +126,17 @@ const AttendanceScan = () => {
   useRealtimeAttendance(user?.id ?? null, fetchTodayAttendance);
   useEffect(() => {
     if (!user) return;
-    if(scannerRef.current) {
-      scannerRef.current
-        .stop()
-        .catch(() => {})
-        .finally(() => {
-          scannerRef.current?.clear();
-          scannerRef.current = null;
-        });
+    if(afterCutoff && !todayAttendance) {
+      toast({
+        title: "Attendance Cutoff",
+        description: "check-in after 2:00 PM  is not allowed.You are marked absent for today.",
+        variant: "destructive",
+      });
+      safeStopScanner();
+      return;
+    }
+    if(todayAttendance) {
+      return;
     }
 
     const html5QrCode = new Html5Qrcode("qr-reader");
@@ -133,14 +149,12 @@ const AttendanceScan = () => {
           fps: 10,
           qrbox: { width: 250, height: 250 },
         },
-        async (decodedText) => {
+        async (decodedText) => {await safeStopScanner();
           // decodedText = site_id from QR
-          scannerRef.current = null;
           let siteid:string;
           try{
-            const parsed = JSON.parse(decodedText);
-            siteid = parsed.site_id;
-          } catch (e) {
+            siteid = JSON.parse(decodedText).site_id;
+          } catch  {
             toast({
               title: "Invalid QR Code",
               description: "The scanned QR code is not valid",
@@ -158,19 +172,13 @@ const AttendanceScan = () => {
           description: "Camera permission denied or not available",
           variant: "destructive",
         });
-        console.error(err);
+
       });
 
     return () => {
-      html5QrCode
-        .stop()
-        .catch(() => {})
-        .finally(() => {
-          html5QrCode.clear();
-          scannerRef.current = null;
-        });
+      safeStopScanner();
     };
-  }, [user]);
+  }, [user,todayAttendance,afterCutoff]);
 
   /* ===================== CORE ===================== */
 

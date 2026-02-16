@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
+
 interface Site {
   id: string;
   name: string;
@@ -36,7 +37,14 @@ interface AttendanceRecord {
   checkout_at: string | null;
   site_id: string;
 }
-
+const isAfterCutoffIST = () => {
+  const now = new Date(
+    new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })
+  );
+  const cutoff = new Date(now);
+  cutoff.setHours(14, 0, 0, 0); // 2:00 PM IST
+  return now > cutoff;
+};
 const EmployeeAttendance = () => {
   const { user } = useAuth();
   const [sites, setSites] = useState<Site[]>([]);
@@ -49,6 +57,8 @@ const EmployeeAttendance = () => {
   const [showHistory, setShowHistory] = useState(false);
 
   const today = new Date().toISOString().split('T')[0];
+  const afterCutoff=isAfterCutoffIST(); // Helper function to determine if current time is after cutoff
+  
 
   /* ===================== FETCH ===================== */
 
@@ -244,7 +254,7 @@ const EmployeeAttendance = () => {
 
                 <Button
                   onClick={handleCheckIn}
-                  disabled={isLoading}
+                  disabled={isLoading || afterCutoff}
                   className="w-full"
                   size="lg"
                 >
@@ -254,6 +264,13 @@ const EmployeeAttendance = () => {
               </>
             ) : !todayAttendance.checkout_at ? (
               <>
+                <div className="p-4 bg-muted rounded-lg text-center">
+                  {afterCutoff ? (
+                    <p className="text-red-600 font-medium">Attendance closed for today.<br/> you are marked as absent.</p>
+                  ) : (<p className="text-muted-foreground">
+                    Not checked in yet</p>
+                  )}
+                </div>
                 <div className="p-4 bg-green-500/10 rounded-lg">
                   <div className="flex justify-between">
                     <div>

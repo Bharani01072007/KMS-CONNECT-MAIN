@@ -71,32 +71,33 @@ const EmployeeChat = () => {
           },
           (payload) => {
             const msg = payload.new as Message;
-            if (msg.sender_id !== user.id && msg.recipient_id !== user.id) return;
+            if (!isMounted) return;
             setMessages((prev) =>
               prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
             );
           }
         )
-        .subscribe();
+        .subscribe(async (status) => {
+          if (status === "SUBSCRIBED" && isMounted) {
+            /* ✅ FETCH HISTORY AFTER SUBSCRIPTION READY */
+            const { data } = await supabase
+              .from("messages")
+              .select("*")
+              .eq("thread_id", tId)
+              .order("created_at", { ascending: true });
 
-      /* ✅ FETCH HISTORY */
-      const { data } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("thread_id", tId)
-        .or(`sender_id.eq.${user.id},recipient_id.eq.${user.id}`)
-        .order("created_at", { ascending: true });
-
-      if (isMounted) {
-        setMessages((prev) => {
-          const map = new Map(prev.map((m) => [m.id, m]));
-          (data || []).forEach((m) => map.set(m.id, m));
-          return Array.from(map.values()).sort(
-            (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-          );
+            if (isMounted) {
+              setMessages((prev) => {
+                const map = new Map(prev.map((m) => [m.id, m]));
+                (data || []).forEach((m) => map.set(m.id, m));
+                return Array.from(map.values()).sort(
+                  (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                );
+              });
+              setIsLoading(false);
+            }
+          }
         });
-        setIsLoading(false);
-      }
     };
 
     init();

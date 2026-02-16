@@ -108,16 +108,18 @@ const AdminChat = () => {
             );
           }
         )
-        .subscribe();
-
-      /* ✅ FETCH EXISTING MESSAGES */
-      const { data } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("thread_id", threadId)
-        .order("created_at", { ascending: true });
-      setMessages(data || []);
-      setIsLoading(false);
+        .subscribe(async (status) => {
+          if (status === "SUBSCRIBED") {
+            /* ✅ FETCH EXISTING MESSAGES AFTER SUBSCRIPTION READY */
+            const { data } = await supabase
+              .from("messages")
+              .select("*")
+              .eq("thread_id", threadId)
+              .order("created_at", { ascending: true });
+            setMessages(data || []);
+            setIsLoading(false);
+          }
+        });
     };
 
     init();
@@ -130,7 +132,7 @@ const AdminChat = () => {
         channelRef.current = null;
       }
     };
-  }, [threadId]);
+  }, [threadId, user]);
 
   /* ===================== AUTO SCROLL ===================== */
 

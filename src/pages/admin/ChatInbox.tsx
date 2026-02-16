@@ -170,7 +170,11 @@ const AdminChatInbox = () => {
           );
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status !== "SUBSCRIBED") {
+          console.warn("ChatInbox subscription status:", status);
+        }
+      });
   };
 
   /* ===================== UI ===================== */

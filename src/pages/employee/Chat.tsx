@@ -96,12 +96,11 @@ const EmployeeChat = () => {
               event: "INSERT",
               schema: "public",
               table: "messages",
-              filter: `thread_id=eq.${tId}`,
             },
             (payload) => {
               console.log("📨 New message received:", payload.new);
-              if (!isMounted) return;
               const msg = payload.new as Message;
+              if (msg.thread_id !== tId) return;
               setMessages((prev) =>
                 prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
               );
@@ -114,8 +113,9 @@ const EmployeeChat = () => {
 
         channelRef.current = channel;
         unsubscribe = () => {
-          console.log("🔌 Removing channel:", tId);
-          supabase.removeChannel(channel);
+          console.log("🔌 Removing channel:", tId, channelRef.current?.topic ?? channelRef.current);
+          supabase.removeChannel(channelRef.current);
+          channelRef.current = null;
         };
       } catch (error) {
         console.error("Chat init error:", error);
@@ -137,9 +137,10 @@ const EmployeeChat = () => {
 
     return () => {
       isMounted = false;
-      // Only clean up on unmount, not on every effect re-run
-      if (unsubscribe && channelRef.current) {
-        unsubscribe();
+      if (channelRef.current) {
+        console.log("Cleanup: removing channel for thread:", threadId || "(unknown)");
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
       }
     };
   }, [user]);
@@ -180,6 +181,8 @@ const EmployeeChat = () => {
       })
       .select()
       .single();
+
+    console.log("Message insert result:", { data, error, threadId, adminId });
 
     if (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });

@@ -40,9 +40,15 @@ const AdminChatInbox = () => {
   const channelRef = useRef<any>(null);
 
   useEffect(() => {
-    init();
-
+    let isMounted = true;
+    const setup = async () => {
+      if (!isMounted) return;
+      await init();
+    };
+    
+    setup();
     return () => {
+      isMounted = false;
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
@@ -125,7 +131,7 @@ const AdminChatInbox = () => {
     console.log("🔧 Setting up inbox realtime");
     
     const channel = supabase
-      .channel("admin-chat-inbox")
+      .channel(`admin-chat-inbox-${adminUserId}`)
       .on(
         "postgres_changes",
         {

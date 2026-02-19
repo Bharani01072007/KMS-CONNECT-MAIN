@@ -77,15 +77,16 @@ const AdminChat = () => {
 
   /* ===================== INIT ===================== */
   useEffect(() => {
-    if(!user||!employee)return;
-      const tId = getThreadId(user.id, employee.user_id); 
-      setThreadId(tId);
-  }, [user, employee]);
+    if(!user||!employeeId)return;
+    const tId = getThreadId(user.id, employeeId); 
+    setThreadId(tId);
+  }, [user, employeeId]);
+
   useEffect(() => {
     fetchEmployee();
   }, [fetchEmployee]);
   useEffect(() => {
-    if (!user || !threadId) return;
+    if (!threadId || !user) return;
   
     let unsubscribe: (() => void) | null = null;
 
@@ -122,11 +123,11 @@ const AdminChat = () => {
               event: "INSERT",
               schema: "public",
               table: "messages",
-              filter: `thread_id=eq.${threadId}`,
             },
             (payload) => {
               console.log("📨 New message received:", payload.new);
               const msg = payload.new as Message;
+              if (msg.thread_id !== threadId) return;
               setMessages((prev) =>
                 prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
               );
@@ -139,8 +140,9 @@ const AdminChat = () => {
 
         channelRef.current = channel;
         unsubscribe = () => {
-          console.log("🔌 Removing channel:", threadId);
-          supabase.removeChannel(channel);
+          console.log("🔌 Removing channel:", threadId, channelRef.current?.topic ?? channelRef.current);
+          supabase.removeChannel(channelRef.current);
+          channelRef.current = null;
         };
       } catch (error) {
         console.error("Chat init error:", error);
@@ -158,8 +160,10 @@ const AdminChat = () => {
 
     /* ✅ CLEANUP - Only on unmount */
     return () => {
-      if (unsubscribe && channelRef.current) {
-        unsubscribe();
+      if (channelRef.current) {
+        console.log("Cleanup: removing channel for thread:", threadId);
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
       }
     };
   }, [threadId]);
@@ -186,7 +190,7 @@ const AdminChat = () => {
         id: tempId,
         content,
         sender_id: user.id,
-        recipient_id: employee!.user_id,
+        recipient_id: employeeId,
         created_at: new Date().toISOString(),
         thread_id: threadId,
         pending: true,
@@ -205,6 +209,8 @@ const AdminChat = () => {
       })
       .select()
       .single();
+
+    console.log("Message insert result:", { data, error, threadId });
 
     if (error) {
       toast({

@@ -10,12 +10,32 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   throw new Error("Supabase environment variables are missing");
 }
 
+// Allow opting into ephemeral (per-tab) auth storage by adding `?auth=ephemeral`
+// to the URL. This uses `sessionStorage` instead of `localStorage` so two tabs
+// in the same browser can hold different authenticated sessions (useful for
+// testing admin vs employee accounts simultaneously).
+let authStorage: Storage = localStorage;
+try {
+  if (typeof window !== "undefined") {
+    const params = new URL(window.location.href).searchParams;
+    const mode = params.get("auth");
+    if (mode === "ephemeral") {
+      authStorage = sessionStorage;
+      // Helpful console hint while debugging
+      // eslint-disable-next-line no-console
+      console.info("Supabase auth: using sessionStorage (ephemeral) for this tab");
+    }
+  }
+} catch (e) {
+  // ignore; keep default storage
+}
+
 export const supabase = createClient<Database>(
   SUPABASE_URL,
   SUPABASE_ANON_KEY,
   {
     auth: {
-      storage: localStorage,
+      storage: authStorage,
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,

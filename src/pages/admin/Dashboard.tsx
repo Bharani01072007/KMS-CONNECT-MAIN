@@ -245,7 +245,7 @@ const AdminDashboard = () => {
   const menuItems = [
     { icon: Users, label: 'Employee Management', href: '/admin/employees', description: 'Add, edit, view employees', color: 'text-blue-500' },
     { icon: MapPin, label: 'Site Management', href: '/admin/sites', description: 'Manage work sites', color: 'text-green-500' },
-    { icon: MessageSquare, label: 'Chat Inbox', href: '/admin/chat', description: 'Message employees', color: 'text-primary' },
+
     { icon: Calendar, label: 'Leave Approvals', href: '/admin/leaves', description: `${stats.pendingLeaves} pending requests`, color: 'text-amber-500' },
     { icon: CalendarDays, label: 'Company Holidays', href: '/admin/holidays', description: 'Assign company-wide holidays', color: 'text-violet-500' },
     { icon: IndianRupee, label: 'Advance Requests', href: '/admin/advance-requests', description: 'Approve salary advances', color: 'text-emerald-500' },

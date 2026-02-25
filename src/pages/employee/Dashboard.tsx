@@ -134,7 +134,6 @@ const EmployeeDashboard = () => {
     { icon: Calendar, label: 'Leave Requests', description: 'Apply for leave', href: '/employee/leaves', color: 'text-red-500' },
     { icon: IndianRupee, label: 'Advance Requests', description: 'Request salary advance', href: '/employee/advance-requests', color: 'text-emerald-500' },
     { icon: Wallet, label: 'Money Ledger', description: 'View transactions', href: '/employee/ledger', color: 'text-purple-500' },
-    { icon: MessageSquare, label: 'Chat', description: 'Chat with admin', href: '/employee/chat', color: 'text-primary' },
     { icon: AlertCircle, label: 'Complaints', description: 'Raise a complaint', href: '/employee/complaints', color: 'text-destructive' },
     { icon: Bell, label: 'Notifications', description: 'View announcements', href: '/employee/notifications', color: 'text-teal-500' },
   ];

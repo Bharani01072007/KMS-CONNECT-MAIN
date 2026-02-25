@@ -22,7 +22,7 @@ import EmployeeAttendanceScan from "./pages/employee/AttendanceScan";
 import EmployeeAttendanceHistory from "./pages/employee/AttendanceHistory";
 import EmployeeLeaves from "./pages/employee/Leaves";
 import EmployeeLedger from "./pages/employee/Ledger";
-import EmployeeChat from "./pages/employee/Chat";
+
 import EmployeeComplaints from "./pages/employee/Complaints";
 import EmployeeNotifications from "./pages/employee/Notifications";
 import EmployeeProfile from "./pages/employee/Profile";
@@ -36,8 +36,7 @@ import AdminLeaves from "./pages/admin/Leaves";
 import AdminLedger from "./pages/admin/Ledger";
 import AdminNotifications from "./pages/admin/Notifications";
 import AdminComplaints from "./pages/admin/Complaints";
-import AdminChat from "./pages/admin/Chat";
-import AdminChatInbox from "./pages/admin/ChatInbox";
+
 import AdminHolidays from "./pages/admin/Holidays";
 import AdminAdvanceRequests from "./pages/admin/AdvanceRequests";
 import AdminAttendanceHistory from "./pages/admin/AttendanceHistory"; // ✅
@@ -111,10 +110,6 @@ const App = () => (
               element={<ProtectedRoute allowedRoles={["employee"]}><EmployeeAdvanceRequests /></ProtectedRoute>}
             />
             <Route
-              path="/employee/chat"
-              element={<ProtectedRoute allowedRoles={["employee"]}><EmployeeChat /></ProtectedRoute>}
-            />
-            <Route
               path="/employee/complaints"
               element={<ProtectedRoute allowedRoles={["employee"]}><EmployeeComplaints /></ProtectedRoute>}
             />
@@ -171,15 +166,6 @@ const App = () => (
               path="/admin/complaints"
               element={<ProtectedRoute allowedRoles={["admin"]}><AdminComplaints /></ProtectedRoute>}
             />
-            <Route
-              path="/admin/chat/:employeeId"
-              element={<ProtectedRoute allowedRoles={["admin"]}><AdminChat /></ProtectedRoute>}
-            />
-            <Route
-              path="/admin/chat"
-              element={<ProtectedRoute allowedRoles={["admin"]}><AdminChatInbox /></ProtectedRoute>}
-            />
-
             {/* ========== FALLBACK ========== */}
             <Route path="*" element={<NotFound />} />
           </Routes>

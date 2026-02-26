@@ -29,11 +29,13 @@ import {
 import {
   format,
   eachDayOfInterval,
+  eachMonthOfInterval,
   startOfMonth,
   endOfMonth,
 } from 'date-fns';
 import { cn } from '@/lib/utils';
 import type { DateRange } from 'react-day-picker';
+import { useMemo } from 'react';
 
 /* ===================== TYPES ===================== */
 
@@ -67,28 +69,37 @@ const EmployeeLeaves = () => {
   }, [user]);
 
   const fetchData = async () => {
+    if (!user) return;
     const now = new Date();
-    const monthStart = format(startOfMonth(now), 'yyyy-MM-dd');
-    const monthEnd = format(endOfMonth(now), 'yyyy-MM-dd');
-
-    const { count } = await supabase
-      .from('leaves')
-      .select('*', { count: 'exact', head: true })
-      .eq('emp_user_id', user!.id)
-      .eq('status', 'approved')
-      .gte('start_date', monthStart)
-      .lte('start_date', monthEnd);
-
-    setApprovedThisMonth(count ?? 0);
+    const monthStart = startOfMonth(now);
+    const monthEnd = endOfMonth(now);
 
     const { data } = await supabase
+      .from('leaves')
+      .select('start_date,end_date')
+      .eq('emp_user_id', user!.id)
+      .eq('status', 'approved')
+
+    let totalDays=0;
+    data?.forEach((leave) => {
+      const leaveStart = new Date(leave.start_date);
+      const leaveEnd = new Date(leave.end_date);
+      const overlapStart = leaveStart > monthStart ? leaveStart : monthStart;
+      const overlapEnd = leaveEnd < monthEnd ? leaveEnd : monthEnd;
+
+      if (overlapStart <= overlapEnd) {
+        totalDays += eachDayOfInterval({ start: overlapStart, end: overlapEnd }).length;
+      }
+    });
+    setApprovedThisMonth(totalDays);
+    const { data: leaveHistory } = await supabase
       .from('leaves')
       .select('*')
       .eq('emp_user_id', user!.id)
       .order('start_date', { ascending: false });
-
-    if (data) setLeaves(data);
+    if(leaveHistory) setLeaves(leaveHistory);
   };
+ 
 
   /* ===================== HELPERS ===================== */
 
@@ -97,7 +108,66 @@ const EmployeeLeaves = () => {
       ? eachDayOfInterval({ start: range.from, end: range.to })
       : [];
 
-  const unpaidDays = Math.max(0, approvedThisMonth + selectedDays.length - 2);
+  const calculateUnpaidDays = () => 
+  {
+    if (!range?.from || !range?.to) return 0;
+
+    const start = range.from;
+    const end = range.to;
+
+    const months = eachMonthOfInterval({ start, end });
+
+    let totalUnpaid = 0;
+
+    for (const monthDate of months) {
+      const monthStart = startOfMonth(monthDate);
+      const monthEnd = endOfMonth(monthDate);
+
+      const overlapStart = start > monthStart ? start : monthStart;
+      const overlapEnd = end < monthEnd ? end : monthEnd;
+
+      const overlapDays =
+        overlapStart <= overlapEnd
+          ? Math.floor(
+              (overlapEnd.getTime() - overlapStart.getTime()) /
+                (1000 * 60 * 60 * 24)
+            ) + 1
+          : 0;
+
+      // Calculate approved leaves for that month
+      let approvedInMonth = 0;
+
+      leaves
+        .filter((l) => l.status === 'approved')
+        .forEach((leave) => {
+          const leaveStart = new Date(leave.start_date);
+          const leaveEnd = new Date(leave.end_date);
+
+          const overlapStart2 =
+            leaveStart > monthStart ? leaveStart : monthStart;
+          const overlapEnd2 =
+            leaveEnd < monthEnd ? leaveEnd : monthEnd;
+
+          if (overlapStart2 <= overlapEnd2) {
+            approvedInMonth +=
+              Math.floor(
+                (overlapEnd2.getTime() - overlapStart2.getTime()) /
+                  (1000 * 60 * 60 * 24)
+              ) + 1;
+          }
+        });
+
+      const paidLeft = Math.max(0, 2 - approvedInMonth);
+
+      totalUnpaid += Math.max(0, overlapDays - paidLeft);
+    }
+
+    return totalUnpaid;
+  };
+
+  const unpaidDays = useMemo(()=> {
+    return calculateUnpaidDays();
+  }, [range, leaves]);
 
   /* ===================== SUBMIT ===================== */
 

@@ -66,15 +66,40 @@ const EmployeeDashboard = () => {
     const monthStart = startOfMonth(now).toISOString().split('T')[0];
     const monthEnd = endOfMonth(now).toISOString().split('T')[0];
 
-    const { count } = await supabase
+    const { data: approvedLeaves } = await supabase
       .from('leaves')
-      .select('*', { count: 'exact', head: true })
+      .select('start_date,end_date')
       .eq('emp_user_id', user.id)
-      .eq('status', 'approved')
-      .gte('start_date', monthStart)
-      .lte('start_date', monthEnd);
+      .eq('status', 'approved');
 
-    setApprovedLeavesThisMonth(count ?? 0);
+    let totalDays = 0;
+
+    approvedLeaves?.forEach((leave) => {
+      const leaveStart = new Date(leave.start_date);
+      const leaveEnd = new Date(leave.end_date);
+
+      const overlapStart =
+        leaveStart > new Date(monthStart)
+          ? leaveStart
+          : new Date(monthStart);
+
+      const overlapEnd =
+        leaveEnd < new Date(monthEnd)
+          ? leaveEnd
+          : new Date(monthEnd);
+
+      if (overlapStart <= overlapEnd) {
+        totalDays +=
+          Math.floor(
+            (overlapEnd.getTime() - overlapStart.getTime()) /
+              (1000 * 60 * 60 * 24)
+          ) + 1;
+      }
+    });
+
+    setApprovedLeavesThisMonth(totalDays);
+
+
 
     // Ledger balance
     const monthStartFormatted = format(new Date(), 'yyyy-MM-01');

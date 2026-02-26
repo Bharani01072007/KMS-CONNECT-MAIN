@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { Database } from "@/integrations/supabase/types";
+import {eachMonthOfInterval,startOfMonth,endOfMonth} from 'date-fns';
 
 /* ===================== TYPES ===================== */
 
@@ -90,17 +91,44 @@ const AdminLeaves = () => {
 
   /* ===================== LEAVE COUNT PER MONTH ===================== */
 
-  const buildMonthlyApprovedMap = (leaves: LeaveRequest[]) => {
+  const buildMonthlyApprovedMap = (leaves: LeaveRequest[]) => 
+  {
     const map: Record<string, Record<string, number>> = {};
+
     for (const leave of leaves) {
       if (leave.status !== "approved") continue;
-      const empid=leave.emp_user_id;
-      const month = leave.start_date.slice(0, 7);
-      if(!map[empid]) map[empid]={};
-      if(!map[empid][month]) map[empid][month]=0;
-      map[empid][month]+=leave.days;
+
+      const empId = leave.emp_user_id;
+      const start = new Date(leave.start_date);
+      const end = new Date(leave.end_date);
+
+      const months = eachMonthOfInterval({ start, end });
+
+      for (const monthDate of months) {
+        const monthStart = startOfMonth(monthDate);
+        const monthEnd = endOfMonth(monthDate);
+
+        const overlapStart = start > monthStart ? start : monthStart;
+        const overlapEnd = end < monthEnd ? end : monthEnd;
+
+        const days =
+          overlapStart <= overlapEnd
+            ? Math.floor(
+                (overlapEnd.getTime() - overlapStart.getTime()) /
+                  (1000 * 60 * 60 * 24)
+              ) + 1
+            : 0;
+
+        const monthKey = monthStart.toISOString().slice(0, 7);
+
+        if (!map[empId]) map[empId] = {};
+        if (!map[empId][monthKey]) map[empId][monthKey] = 0;
+
+        map[empId][monthKey] += days;
+      }
     }
-    return map;  
+
+    return map;
   };
 
 
@@ -161,24 +189,52 @@ const AdminLeaves = () => {
     }
   };
 
-  const handleApproveClick = async (leave: LeaveRequest) => {
-    const month = leave.start_date.slice(0, 7); // yyyy-MM
-    const approvedSoFar =
-      monthlyApproved[leave.emp_user_id]?.[month] ?? 0;
-    const paidLeft = Math.max(0, 2 - approvedSoFar);
-    const unpaidDays = Math.max(0, leave.days - paidLeft);
+  const handleApproveClick = async (leave: LeaveRequest) => 
+  {
+    const start = new Date(leave.start_date);
+    const end = new Date(leave.end_date);
 
-    if (unpaidDays >0){
+    const months = eachMonthOfInterval({ start, end });
+
+    let totalUnpaidDays = 0;
+
+    for (const monthDate of months) {
+      const monthStart = startOfMonth(monthDate);
+      const monthEnd = endOfMonth(monthDate);
+
+      const overlapStart = start > monthStart ? start : monthStart;
+      const overlapEnd = end < monthEnd ? end : monthEnd;
+
+      const overlapDays =
+        overlapStart <= overlapEnd
+          ? Math.floor(
+              (overlapEnd.getTime() - overlapStart.getTime()) /
+                (1000 * 60 * 60 * 24)
+            ) + 1
+          : 0;
+
+      const monthKey = monthStart.toISOString().slice(0, 7);
+
+      const approvedSoFar =
+        monthlyApproved[leave.emp_user_id]?.[monthKey] ?? 0;
+
+      const paidLeft = Math.max(0, 2 - approvedSoFar);
+
+      totalUnpaidDays += Math.max(0, overlapDays - paidLeft);
+    }
+
+    if (totalUnpaidDays > 0) {
       setPendingLeave({
         ...leave,
-        unpaidDays,
-      }as LeaveRequest & {unpaidDays:number});
+        unpaidDays: totalUnpaidDays,
+      } as LeaveRequest & { unpaidDays: number });
+
       setShowWarning(true);
       return;
     }
+
     approveLeave(leave.id);
   };
-
   /* ===================== REJECT ===================== */
 
   const handleReject = async (id: string) => {
@@ -250,22 +306,7 @@ const AdminLeaves = () => {
   const unpaidDays = (pendingLeave as (LeaveRequest & { unpaidDays: number }) | null)?.unpaidDays ?? 0;
 
   const deductionAmount = unpaidDays * (pendingLeave?.daily_wage ?? 0);
-  const isLatestApprovedInMonth = (
-    leave: LeaveRequest,
-    allLeaves: LeaveRequest[]
-  ) => {
-    const month = leave.start_date.slice(0, 7);
 
-    return (
-      leave.status === "approved" &&
-      allLeaves.find(
-        (l) =>
-          l.emp_user_id === leave.emp_user_id &&
-          l.status === "approved" &&
-          l.start_date.slice(0, 7) === month
-      )?.id === leave.id
-    );
-  };
 
   /* ===================== UI ===================== */
 
@@ -310,16 +351,19 @@ const AdminLeaves = () => {
 
                       {getStatusBadge(leave.status)}
 
-                      {isLatestApprovedInMonth(leave,leaves) && (() => {
-                        const month = leave.start_date.slice(0, 7);
-                        const usedDays =
-                          monthlyApproved[leave.emp_user_id]?.[month] || 0;
-                        return (
-                          <Badge variant={usedDays > 2 ? "destructive" : "secondary"}>
-                            {usedDays} / 2 approved this month
-                          </Badge>
-                        );
-                      })()}
+                      {leave.status === "approved" && 
+                        eachMonthOfInterval({
+                          start: new Date(leave.start_date),
+                          end: new Date(leave.end_date)
+                        }).map((monthDate) => {
+                          const monthKey = startOfMonth(monthDate).toISOString().slice(0, 7);
+                          const usedDays = monthlyApproved[leave.emp_user_id]?.[monthKey] ?? 0;
+                          return (
+                            <Badge key={monthKey} variant={usedDays > 2 ? "destructive" : "secondary"}>
+                              {usedDays} /2 in {monthKey}
+                            </Badge>
+                          );
+                        })}
                     </div>
 
                     <p className="text-sm">
